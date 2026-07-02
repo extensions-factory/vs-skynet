@@ -152,22 +152,31 @@ pnpm install
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 4: Update <code>package.json</code> identity fields to match Global Constraints</strong></li>
 </ul>
-<p>Open <code>package.json</code> and ensure these fields are set exactly:</p>
+<p>Run <code>pnpm --version</code> to get the installed pnpm version (e.g. <code>9.12.0</code>), then open <code>package.json</code> and ensure these fields are set exactly (substituting the real version for <code>&lt;pnpm-version&gt;</code>):</p>
 <pre><code class="language-json">{
   &quot;name&quot;: &quot;skynet&quot;,
   &quot;displayName&quot;: &quot;Skynet&quot;,
   &quot;publisher&quot;: &quot;riso-tech&quot;,
-  &quot;description&quot;: &quot;AI CLI agents orchestrated as a Scrum team inside VSCode&quot;
+  &quot;description&quot;: &quot;AI CLI agents orchestrated as a Scrum team inside VSCode&quot;,
+  &quot;packageManager&quot;: &quot;pnpm@&lt;pnpm-version&gt;&quot;
 }
 </code></pre>
-<p>(Leave <code>engines</code>, <code>main</code>, <code>contributes</code>, and <code>activationEvents</code> as generated — they&#39;re not covered by this plan.)</p>
+<p>(Leave <code>engines</code>, <code>main</code>, <code>contributes</code>, and <code>activationEvents</code> as generated — they&#39;re not covered by this plan. The <code>packageManager</code> field pins the pnpm version for Corepack and <code>pnpm/action-setup</code> in CI — Task 9.)</p>
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 5: Confirm the skeleton compiles</strong></li>
 </ul>
 <p>Run: <code>pnpm run compile</code>
 Expected: exits 0, produces compiled output (typically <code>out/extension.js</code>).</p>
 <ul>
-<li><input disabled="" type="checkbox"> <strong>Step 6: Commit</strong></li>
+<li><input disabled="" type="checkbox"> <strong>Step 6: Verify no build artifacts would be committed, then commit</strong></li>
+</ul>
+<p>Run: <code>git status --porcelain | grep -E &#39;^\?\? (node_modules|out)/&#39;</code>
+Expected: no output. If either directory is listed as untracked, the generator did not produce a <code>.gitignore</code> covering it — create a minimal one now so Step 7 below doesn&#39;t commit it:</p>
+<pre><code class="language-bash">printf &#39;node_modules/\nout/\n&#39; &gt; .gitignore
+</code></pre>
+<p>(This is superseded by the complete version Task 8 writes later — this is only a safety net so <code>git add -A</code> below can&#39;t accidentally commit build output.)</p>
+<ul>
+<li><input disabled="" type="checkbox"> <strong>Step 7: Commit</strong></li>
 </ul>
 <pre><code class="language-bash">git add -A
 git commit -m &quot;chore: scaffold VSCode extension via generator-code, switch to pnpm&quot;
@@ -289,12 +298,11 @@ export default defineConfig({
 <li><input disabled="" type="checkbox"> <strong>Step 2: Rename the integration test script</strong></li>
 </ul>
 <p>Open <code>package.json</code> and ensure the <code>&quot;scripts&quot;</code> block contains exactly (merging with <code>test:unit</code> from Task 2, keeping other existing scripts like <code>compile</code>/<code>watch</code>/<code>vscode:prepublish</code> untouched):</p>
-<pre><code class="language-json">&quot;pretest&quot;: &quot;pnpm run compile&quot;,
-&quot;test:integration&quot;: &quot;vscode-test&quot;,
+<pre><code class="language-json">&quot;test:integration&quot;: &quot;pnpm run compile &amp;&amp; vscode-test&quot;,
 &quot;test:unit&quot;: &quot;vitest run&quot;,
 &quot;test&quot;: &quot;pnpm run test:unit &amp;&amp; pnpm run test:integration&quot;
 </code></pre>
-<p>(Remove any old plain <code>&quot;test&quot;: &quot;vscode-test&quot;</code> entry the generator created — it&#39;s superseded by the combined script above.)</p>
+<p>(Remove any old plain <code>&quot;test&quot;: &quot;vscode-test&quot;</code> and any generator-added <code>&quot;pretest&quot;</code> entry — <code>pretest</code> only auto-fires for the exact <code>test</code> script name, not for <code>test:unit</code>/<code>test:integration</code> invoked directly, and would force an unnecessary compile before every unit-test run. Making <code>test:integration</code> self-contained instead is unambiguous regardless of how it&#39;s invoked.)</p>
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 3: Run the integration suite and verify it passes</strong></li>
 </ul>
@@ -336,11 +344,11 @@ pnpm exec biome init
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 3: Exclude build output from Biome</strong></li>
 </ul>
-<p>Open the generated <code>biome.json</code>. Add the compiled output directory to whichever exclusion mechanism its schema uses:</p>
+<p>Open the generated <code>biome.json</code>. Add the compiled output and downloaded-VSCode-instance directories to whichever exclusion mechanism its schema uses (matching what <code>.gitignore</code> covers — Task 8):</p>
 <ul>
-<li><p>If the file has a <code>&quot;files&quot;: { &quot;ignore&quot;: [...] }</code> key (Biome 1.x schema): add <code>&quot;out/**&quot;</code> to that array.</p>
+<li><p>If the file has a <code>&quot;files&quot;: { &quot;ignore&quot;: [...] }</code> key (Biome 1.x schema): add <code>&quot;out/**&quot;</code> and <code>&quot;.vscode-test/**&quot;</code> to that array.</p>
 </li>
-<li><p>If the file has a <code>&quot;files&quot;: { &quot;includes&quot;: [...] }</code> key with <code>!</code>-prefixed negation globs (Biome 2.x schema): add <code>&quot;!out/**&quot;</code> to that array.</p>
+<li><p>If the file has a <code>&quot;files&quot;: { &quot;includes&quot;: [...] }</code> key with <code>!</code>-prefixed negation globs (Biome 2.x schema): add <code>&quot;!out/**&quot;</code> and <code>&quot;!.vscode-test/**&quot;</code> to that array.</p>
 </li>
 <li><p><input disabled="" type="checkbox"> <strong>Step 4: Replace the lint script</strong></p>
 </li>
@@ -469,7 +477,7 @@ git commit -m &quot;docs: add per-tool instruction files pointing to CONSTITUTIO
 <h3>Task 7: Enforce Conventional Commits with commitlint</h3>
 <p><strong>Files:</strong></p>
 <ul>
-<li>Create: <code>commitlint.config.js</code>, <code>.githooks/commit-msg</code></li>
+<li>Create: <code>commitlint.config.cjs</code>, <code>.githooks/commit-msg</code></li>
 <li>Modify: <code>package.json</code> (<code>devDependencies</code>), git config (<code>core.hooksPath</code>)</li>
 </ul>
 <p><strong>Interfaces:</strong></p>
@@ -483,7 +491,7 @@ git commit -m &quot;docs: add per-tool instruction files pointing to CONSTITUTIO
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 2: Write the commitlint config</strong></li>
 </ul>
-<p>Create <code>commitlint.config.js</code>:</p>
+<p>Create <code>commitlint.config.cjs</code> (the <code>.cjs</code> extension forces CommonJS regardless of whether <code>package.json</code> sets <code>&quot;type&quot;: &quot;module&quot;</code> — check that field now; if it&#39;s absent, a plain <code>commitlint.config.js</code> would also work, but <code>.cjs</code> is used here so this step doesn&#39;t depend on that check):</p>
 <pre><code class="language-js">module.exports = {
   extends: [&#39;@commitlint/config-conventional&#39;],
 };
@@ -504,26 +512,26 @@ pnpm exec commitlint --edit &quot;$1&quot;
 <li><input disabled="" type="checkbox"> <strong>Step 5: Verify the hook rejects a bad commit message</strong></li>
 </ul>
 <p>Run:</p>
-<pre><code class="language-bash">git add commitlint.config.js .githooks
+<pre><code class="language-bash">git add -A
 git commit -m &quot;this is not a conventional commit message&quot;
 </code></pre>
-<p>Expected: commit is REJECTED with a commitlint error (e.g. <code>subject may not be empty</code> / <code>type may not be empty</code>).</p>
+<p>Expected: commit is REJECTED with a commitlint error (e.g. <code>subject may not be empty</code> / <code>type may not be empty</code>). <code>git add -A</code> (not a narrower add) is required here because Step 1 already modified <code>package.json</code> and <code>pnpm-lock.yaml</code> — those changes must be staged now so the real commit in Step 6 actually includes the new devDependencies, otherwise the lockfile would be committed out of sync with <code>package.json</code>.</p>
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 6: Commit for real</strong></li>
 </ul>
 <pre><code class="language-bash">git commit -m &quot;chore: enforce Conventional Commits via commitlint git hook&quot;
 </code></pre>
-<p>Expected: commit SUCCEEDS (the message itself is a valid Conventional Commit, proving the hook both rejects bad messages and accepts good ones).</p>
+<p>Expected: commit SUCCEEDS (the message itself is a valid Conventional Commit, proving the hook both rejects bad messages and accepts good ones), and includes <code>package.json</code>/<code>pnpm-lock.yaml</code> alongside <code>commitlint.config.cjs</code> and <code>.githooks/</code> (everything staged in Step 5).</p>
 <hr>
 <h3>Task 8: Write .gitignore</h3>
 <p><strong>Files:</strong></p>
 <ul>
-<li><p>Create: <code>.gitignore</code></p>
+<li><p>Create or overwrite: <code>.gitignore</code> (the generator may have already created one, and Task 1 Step 6 may have written a minimal safety-net version — this replaces either with the complete version)</p>
 </li>
 <li><p><input disabled="" type="checkbox"> <strong>Step 1: Write the file</strong></p>
 </li>
 </ul>
-<p>Create <code>.gitignore</code>:</p>
+<p>Create (or overwrite) <code>.gitignore</code>:</p>
 <pre><code>node_modules/
 out/
 dist/
@@ -569,6 +577,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run compile
       - run: pnpm run lint
       # ponytail: unit tests + lint only; test:integration needs an
       # xvfb-enabled runner step for headless VSCode, add when that&#39;s set up
@@ -579,10 +588,11 @@ jobs:
 </ul>
 <p>Run:</p>
 <pre><code class="language-bash">pnpm install --frozen-lockfile
+pnpm run compile
 pnpm run lint
 pnpm run test:unit
 </code></pre>
-<p>Expected: all three exit 0. (Actual CI execution is verified once this repo has a GitHub remote and this workflow runs there — out of scope for this plan.)</p>
+<p>Expected: all four exit 0. (Actual CI execution is verified once this repo has a GitHub remote and this workflow runs there — out of scope for this plan.)</p>
 <ul>
 <li><input disabled="" type="checkbox"> <strong>Step 3: Commit</strong></li>
 </ul>
