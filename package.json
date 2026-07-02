@@ -25,10 +25,10 @@
     "vscode:prepublish": "pnpm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src",
+    "test:integration": "pnpm run compile && vscode-test",
     "test:unit": "vitest run",
-    "test": "vscode-test"
+    "test": "pnpm run test:unit && pnpm run test:integration"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
