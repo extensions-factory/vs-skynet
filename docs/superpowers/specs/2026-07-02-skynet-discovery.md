@@ -7,7 +7,7 @@
 
 The market opportunity (AI coding tools, multi-agent workflows, cost-conscious devs) is large and growing. But the specific product as scoped has two serious problems surfaced by research:
 
-1. **The core cost-saving mechanism (subscription auth instead of API keys, spread across multiple accounts) is now a live ToS enforcement target.** Anthropic has already taken action against a directly comparable product and, as of June 2026, closed the loophole this idea depends on for the Claude Code leg.
+1. **The core cost-saving mechanism (subscription auth instead of API keys, spread across multiple accounts) is now a live ToS enforcement target for headless/SDK usage.** Anthropic has already taken action against a directly comparable product and, as of June 2026, closed the subscription-billing loophole for `-p`/Agent SDK usage. **Mitigation:** Skynet drives CLIs interactively through VSCode's integrated terminal (pty), not headless/SDK — matching how surviving competitors (Claude Squad, Maestro, Crystal) operate. This reduces the risk materially but doesn't eliminate it (see Risks → Legal/ToS).
 2. **The niche is already occupied.** Several funded/starred open-source tools already orchestrate Claude Code + Codex (+ others) in parallel from a git-worktree-per-agent model; Microsoft has shipped native multi-agent orchestration inside VS Code itself.
 
 Neither problem is fatal to building *something* here, but both should reshape the bet before scaffolding begins. See "Recommendation" at the end.
@@ -61,6 +61,8 @@ This is the load-bearing risk for the whole idea. Anthropic has already taken en
 
 **This is not a theoretical risk to caveat and move past — it materially undermines the product's stated cost-saving thesis for at least the Anthropic leg, as of the month before this doc was written.**
 
+**Mitigation decided (2026-07-02): drive CLIs interactively via VSCode's integrated terminal (pty), not headless/`-p`/Agent SDK.** Skynet will send input and read output through a real terminal session, simulating the same interaction a human typing in the CLI would produce, rather than calling the documented non-interactive/SDK surface. This is materially different from the OpenClaw/headless pattern the June 2026 policy change targeted, and matches how the surviving competitors (Claude Squad, Maestro, Crystal — all tmux/pty-based) operate; none of these have been targeted by the enforcement action that hit OpenClaw. This reduces but does not eliminate the risk: the Usage Policy's "route requests through Pro/Max credentials on behalf of users" language targets the substance of automated subscription usage, not just the `-p`/SDK flag, so a future enforcement pass could target concurrency/session patterns instead of the API surface. Design implication: keep concurrent same-account session count and request cadence within what a plausible power user would produce by hand, and treat this as an ongoing risk to monitor, not a solved problem.
+
 ### Technical — Moderate-High
 
 CLI tools have unstable non-interactive interfaces: Claude Code's headless flag/SDK naming changed under the product; Google discontinued Gemini CLI entirely (Jun 18, 2026) in favor of a new closed-source binary, breaking any integration built against it. None of these tools publish a versioned-API stability contract; orchestrating several concurrently multiplies surface for OAuth session collisions and parsing breakage across releases.
@@ -71,9 +73,10 @@ The OpenClaw precedent is recent and widely covered (TechCrunch, The Register, V
 
 ## Recommendation
 
-The research doesn't kill the idea, but it does invalidate the idea *as pitched*. Two structural findings should shape Setup/Scaffold decisions before any code is written:
+The research doesn't kill the idea, but it does require an architecture decision before any code is written, and that decision has now been made:
 
-- **Don't architect the product's core value prop around subscription-auth-as-cost-arbitrage.** That mechanism is being actively closed off by the largest provider in the stack, as of last month. If subscription auth is kept, frame it as "use your existing login, no separate API key to manage" (a convenience/UX win) rather than "avoid metered billing" (a savings claim that may not survive the next ToS update and could get users' accounts banned).
-- **The differentiation that survives scrutiny is #1 and #2 above (quota-aware routing, polished multi-account UX) plus #5 (ceremony-driven oversight) — not the Scrum-team framing alone**, which is validated as *resonant* but not novel, and not "provider-agnostic orchestration" alone, which free Microsoft/GitHub tooling already ships.
+- **Drive CLI agents interactively through VSCode's own terminal (pty), never headless/`-p`/Agent SDK.** This is the load-bearing mitigation for the Legal/ToS risk (decided 2026-07-02, see Risks → Legal/ToS). It matches how the surviving competitors in this space operate and keeps Skynet's traffic pattern indistinguishable from a human power-user typing in several terminals, rather than a documented programmatic surface a provider can flag and meter separately. It is a risk reduction, not an elimination — session/concurrency patterns should stay plausible for a human, and this should be revisited if enforcement patterns shift.
+- **Still don't lead marketing/positioning with "avoid metered billing."** Frame subscription auth as "use your existing login, no separate API key to manage" (convenience/UX) rather than a savings claim — the interactive mitigation reduces detection/enforcement risk, it doesn't make circumventing per-account usage caps via multiple accounts sanctioned behavior.
+- **The differentiation that survives scrutiny is #1 and #2 (quota-aware routing, polished multi-account UX) plus #5 (ceremony-driven oversight) — not the Scrum-team framing alone**, which is validated as *resonant* but not novel, and not "provider-agnostic orchestration" alone, which free Microsoft/GitHub tooling already ships.
 
-This should be raised explicitly with the human partner before Setup phase questions (stack, standards, AI tools) are asked, since it may change scope, not just tooling.
+Proceeding to Setup with this architecture decision (interactive pty-driven orchestration) as a given.
