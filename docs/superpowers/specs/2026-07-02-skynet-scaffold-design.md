@@ -6,7 +6,7 @@
 ## Decisions (from Setup Q&A)
 
 | Area | Decision |
-|---|---|
+| --- | --- |
 | Language | TypeScript (VSCode extension API is TS-native; no alternative considered) |
 | Package manager | pnpm |
 | Test runner | vitest (unit tests, no VSCode host needed) + `@vscode/test-cli`/mocha (integration tests inside a real VSCode instance) |
