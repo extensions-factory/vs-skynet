@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Interactive Codex Adapter — Design (2026-07-04)</title>
+<title>Interactive Codex Adapter — Design</title>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
@@ -38,175 +38,138 @@
 <body>
 <div class="wrap">
 
-  <h1>Interactive Codex Adapter <span class="mut">— Design (canonical frame)</span></h1>
-  <p class="sub">Adapters · drive <code>codex</code> as a live interactive TUI in a VSCode terminal — the only run mode (pty-only, no headless exec).</p>
+  <h1>Interactive Codex Adapter <span class="mut">— Design</span></h1>
+  <p class="sub">Adapters · drive <code>codex</code> as a live interactive TUI in a VSCode terminal.</p>
   <div class="tags">
     <span class="tag">2026-07-04</span>
     <span class="tag">codex (Rust/ratatui TUI)</span>
-    <span class="tag">ported from 6/ (2026-06-30)</span>
-    <span class="tag">reconciled: pty-only constitution</span>
-    <span class="tag">probe: 2026-07-01 · codex-cli 0.142.4</span>
-  </div>
-
-  <div class="note warn">
-    <b>Status.</b> Ported into <code>active/</code> from the prior worktree (<code>6/</code>) spec (2026-06-30),
-    then reconciled with <code>active</code>'s newer <code>CONSTITUTION.md</code>. Not cosmetic: the constitution
-    mandates <b>pty/terminal only, never headless flags</b>, so the /6 "second run mode alongside
-    <code>codex exec --json</code>" framing is <b>dropped</b> — interactive mailbox is the only run mode. Probe
-    evidence retained as-is; no fresh re-probe.
+    <span class="tag">codex-cli 0.142.4</span>
   </div>
 
   <h2>Goal</h2>
   <p>Drive <code>codex</code> as a <b>live interactive TUI session inside a VSCode terminal</b>. The orchestrator
-     pastes prompts <i>into</i> the terminal and reads results <i>out</i> of files the agent writes. This buys
-     <b>multi-turn steering (paused/resumed turns toward one task completion) + pause/resume in one session</b> and
-     a human-like execution surface, while keeping parsing robust.</p>
+     writes prompts to files, pastes a tiny ping <i>into</i> the terminal, and reads results <i>out</i> of files the
+     agent writes. This gives <b>multi-turn steering (paused/resumed turns toward one task completion), pause/resume
+     in one session</b>, and a human-visible execution surface, while keeping parsing robust.</p>
   <div class="note good">
-    <b>The only run mode.</b> Per <code>CONSTITUTION.md</code> (pty/terminal only, no headless flags, no provider
-    SDK), there is <b>no <code>codex exec --json</code> path</b>. A "fast task" is simply a <b>single-turn</b>
-    mailbox session: one inbox turn, the agent returns <code>done</code>, dispose. Multi-turn and single-turn are the
-    same mechanism at different turn counts.
+    Interactive mailbox is the <b>only</b> run mode. A "fast task" is a <b>single-turn</b> session: one work turn,
+    the agent returns <code>done</code>, dispose. Multi-turn and single-turn are the same mechanism at different turn
+    counts.
   </div>
-  <p class="mut">Canonical frame for interactive mode across all three CLIs. The claude and agy skeletons are
-     <b>not yet ported to <code>active/</code></b>; only codex is in scope here.</p>
+  <p class="mut">The core is CLI-agnostic; each CLI supplies a <b>profile</b>. This spec specifies the
+     <b>codex</b> profile.</p>
 
-  <h2>Depends on (prerequisite)</h2>
-  <p><code>active/</code> is currently a bare scaffold (only <code>src/extension.ts</code>); the base adapter layer
-     this spec builds on <b>does not exist yet</b> and must land first. Reconciled with the constitution, the base
-     layer is <b>types + classifier only — no headless one-shot adapter</b>:</p>
+  <h2>Prerequisites</h2>
+  <p>Interactive mode consumes a small shared adapter layer:</p>
   <ul>
-    <li><b>Shared adapter types</b> — <code>src/adapters/types.ts</code>: <code>ErrorClass</code>,
-        <code>WorkerEvent</code>, <code>WorkerUsage</code>
+    <li><code>src/adapters/types.ts</code> — <code>ErrorClass</code>, <code>WorkerEvent</code>,
+        <code>WorkerUsage</code>
         (<code>{ inputTokens, outputTokens, cachedInputTokens?, cacheWriteTokens?, reasoningTokens?, costUsd? }</code>),
         <code>WorkerResult</code>, <code>RunOpts</code>, <code>WorkerRun</code>, <code>AgentAdapter</code>.</li>
-    <li><b>Error classifier</b> — <code>src/adapters/classify.ts</code>: pure
-        <code>classifyError(text): ErrorClass</code>.</li>
+    <li><code>src/adapters/classify.ts</code> — pure <code>classifyError(text): ErrorClass</code>.</li>
   </ul>
-  <div class="note warn">
-    Deliberately <b>no</b> <code>runCodex</code> / <code>codex exec --json</code> dependency — the /6 one-shot
-    adapter (<code>6/…/2026-06-29-codex-adapter-design.md</code>) is superseded by single-turn interactive mode.
-    Hard prerequisite: without the two symbols above, interactive mode does not compile.
-  </div>
+  <p>Hard prerequisite: without them interactive mode does not compile.</p>
 
-  <h2>Why this shape (recorded decisions)</h2>
-  <ul>
-    <li><b>pty/terminal only (constitution).</b> No headless <code>exec</code>, no provider SDK. Mailbox-over-a-real-terminal
-        is the only mechanism; single-turn is the fast path, not a separate headless code path.</li>
-    <li><b>Ban risk is precautionary only</b> (no observed bans). So we build <b>no anti-ban machinery</b>.</li>
-    <li><b>Control is the real win:</b> multi-turn, pause/resume, live human takeover.</li>
-    <li><b>Public VSCode API cannot read a full-screen TUI's output.</b> <code>onDidWriteTerminalData</code> is
-        permanently proposed; no screen-buffer API. → <b>Output flows through files, never screen scraping.</b></li>
-    <li><b>No <code>node-pty</code>.</b> Native ABI must match VSCode's Electron. → Use VSCode's own
-        <code>createTerminal</code>.</li>
-    <li><b>Session metadata is read from the CLI's own rollout file, not the screen.</b></li>
-    <li><b>Protocol never touches the project's real instruction file.</b> It lives in the disposable, gitignored
-        mailbox dir and is delivered by the readiness ping.</li>
-  </ul>
-
-  <h2>Verified ground truth (real CLI)</h2>
-  <p><code>codex</code> (Rust/ratatui TUI). Sources: developers.openai.com/codex, github.com/openai/codex, and the
-     prior worktree's <code>terminal-probe.test.ts</code> (<code>TERMINAL_PROBE=1</code>, run 2026-07-01 against a
-     real <code>codex-cli 0.142.4</code> install). This port <b>trusts that evidence</b> rather than re-probing.</p>
-  <h3>Launch interactive</h3>
+  <h2>Ground truth (real CLI)</h2>
+  <p><code>codex</code> is a Rust/ratatui TUI. Verified against a real <code>codex-cli 0.142.4</code> install via a
+     terminal probe (mailbox pause/resume/done cycle, submit key, and <code>/status</code> all confirmed).</p>
+  <h3>Launch</h3>
   <pre>codex -C &lt;cwd&gt; -m &lt;model&gt; -s workspace-write -a never
   -c disable_paste_burst=true
   -c 'tui.keymap.composer.submit="tab"'
   -c 'tui.keymap.composer.queue="ctrl-q"'</pre>
   <div class="note good">
-    <b>VERIFIED</b> (prior worktree) — the probe launches with this exact <code>-a never</code> argv and completes a
-    two-turn pause/resume/done cycle with no stuck approval prompt. <code>-a never</code> is confirmed
-    <i>auto-approve within sandbox</i>, not <i>deny everything</i>. Flags are global (shared by <code>codex</code>,
-    <code>resume</code>).
+    <b>Verified:</b> this exact argv launches and completes a two-turn pause/resume/done cycle with no stuck approval
+    prompt. <code>-a never</code> is <i>auto-approve within sandbox</i>, not <i>deny everything</i>. Flags are global
+    (shared by <code>codex</code> and <code>resume</code>).
   </div>
+  <h3>Submit key</h3>
+  <p>Terminal injection is paste-like; plain Enter (<code>\r</code>) and kitty Enter (<code>[13u</code>) both land as
+     newlines in the composer. With the keymap overrides above, submit is <code>sendSequence("\t")</code>.</p>
   <h3>Session rollout file</h3>
   <p><code>$CODEX_HOME/sessions/YYYY/MM/DD/rollout-&lt;ts&gt;-&lt;uuid&gt;.jsonl</code> (default <code>~/.codex</code>).
-     JSONL of <code>RolloutLine</code> envelopes, <b>written incrementally</b>:</p>
+     JSONL of <code>RolloutLine</code> envelopes, written incrementally:</p>
   <ul>
-    <li><code>session_meta</code> → conversation/session <b>id</b>, cwd, cli version, git info.</li>
+    <li><code>session_meta</code> → session <b>id</b>, cwd, cli version, git info.</li>
     <li><code>event_msg</code> with <code>payload.type === "token_count"</code> → <b>cumulative</b> usage in
         <code>payload.info.total_token_usage</code> (<code>input_tokens</code>, <code>cached_input_tokens</code>,
         <code>output_tokens</code>, <code>reasoning_output_tokens</code>, <code>total_tokens</code>);
         <code>last_token_usage</code>; <code>model_context_window</code>; <code>payload.rate_limits</code>.
         Per-turn = current cumulative − previous.</li>
   </ul>
-  <h3>Resume, isolation, submit key</h3>
+  <h3>Resume &amp; isolation</h3>
   <ul>
-    <li><b>Resume:</b> <code>codex resume &lt;id&gt;</code> / <code>--last</code> / <code>/resume</code>. Native
-        resume is our <b>crash-recovery fallback</b>.</li>
+    <li><b><code>/status</code></b> prints session id/model/cwd/permissions/account/limits; the <code>Session:</code>
+        value matches <code>session_meta.id</code> and the rollout filename UUID. Diagnostic only.</li>
+    <li><b>Resume:</b> <code>codex resume &lt;id&gt;</code> / <code>--last</code> / <code>/resume</code>; the id is
+        the rollout UUID.</li>
     <li><b><code>CODEX_HOME</code></b> relocates the whole home (config + <code>sessions/</code>), so per-account
-        isolation (via <code>opts.configDir</code>) moves the rollout files too.</li>
-    <li><b><code>/status</code></b> prints session id/model/cwd/permissions/account/limits; diagnostic only.</li>
-    <li><b>Submit key:</b> injection is paste-like; both <code>\r</code> and kitty <code>[13u</code> land as
-        newlines. Verified path: launch with <code>disable_paste_burst=true</code>, <code>composer.submit="tab"</code>,
-        <code>composer.queue="ctrl-q"</code>, submit with <code>sendSequence("\t")</code>.</li>
+        isolation via <code>opts.configDir</code> moves the rollout files too.</li>
   </ul>
 
-  <h2>Architecture (canonical — shared by all three CLIs)</h2>
-  <p>CLI-agnostic core in <code>src/adapters/interactive/</code>; each CLI supplies a <b>profile</b>.</p>
+  <h2>Architecture</h2>
+  <p>CLI-agnostic core in <code>src/adapters/interactive/</code>; each CLI supplies a profile.</p>
   <pre>ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible)
 ─────────────────────────────             ─────────────────────────────────────
 0. write .skynet/&lt;id&gt;/protocol.md
    + inbox/turn-0.md (readiness)
-   sendText("Read protocol.md, then ──────►  agent reads protocol.md (its own tools)
-   inbox/turn-0.md and follow it")       agent writes outbox/turn-0.json = ready
-   + sendSequence(submitSequence)        (idempotent: safe to re-ping if lost)
+   ping "Read protocol.md, then     ──────►  agent reads protocol.md (its own tools)
+   inbox/turn-0.md and follow it"          agent writes outbox/turn-0.json = ready
+   + sendSequence(submitSequence)          (idempotent: safe to re-ping if lost)
 1. write inbox/turn-N.md  ───────┐
-2. sendText("Read inbox/turn-N.md└──────►  agent reads inbox file, does the work
-   and follow it", false)              agent works…  ◄── user may watch / take over
+2. ping "Read inbox/turn-N.md     └──────►  agent reads inbox file, does the work
+   and follow it"                          agent works…  ◄── user may watch / take over
    + sendSequence(submitSequence)
 3. poll outbox/turn-N.json  ◄──────────── agent writes outbox/turn-N.json on stop
-4. read+parse outbox → TurnResult
-5. SessionHarvester reads newest    ◄──── codex appends rollout-*.jsonl itself
-   rollout-*.jsonl → sessionId+usage
-6. decide next turn:
+4. read + parse outbox → TurnResult
+5. harvest newest rollout-*.jsonl   ◄──── codex appends rollout-*.jsonl itself
+   → sessionId + usage
+6. next turn:
    · pause  = withhold next ping
    · resume = write inbox/turn-(N+1) + ping
-   · single-turn "fast task" = one real turn, expect done, dispose
+   · fast task = one work turn, expect done, dispose
 ──────────────────────── SAD PATH ────────────────────────
-· timeout: no outbox within T  → status 'timeout'
-· poll process group / recursive descendants: no codex → status 'crashed'
-· onDidCloseTerminal / exitStatus → terminal died</pre>
+· no outbox within turnTimeout        → status 'timeout'
+· no codex descendant while turn open → status 'crashed'
+· onDidCloseTerminal / exitStatus     → terminal died</pre>
 
   <h3>Components</h3>
   <ol>
-    <li><b><code>TerminalSession</code></b> — wraps <code>vscode.window.createTerminal({ name, cwd, env })</code>.
-        Captures shell PID via <code>terminal.processId</code>. Owns disposal + <code>onDidCloseTerminal</code>.</li>
-    <li><b><code>Mailbox</code></b> — per-run dir
-        <code>&lt;cwd&gt;/.skynet/&lt;workerId&gt;/{inbox,outbox}/</code> plus
-        <code>protocol.md</code>. Resolves the turn by <b>polling</b> <code>outbox/turn-N.json</code> (no
-        <code>FileSystemWatcher</code>). Ensures <code>.skynet/</code> is gitignored. <code>dispose()</code> removes
-        the whole <code>&lt;workerId&gt;</code> dir. The poll (~500ms, same timeout as the turn) is the only
-        detection mechanism and doubles as the parse-error retry: on <code>ENOENT</code> or a JSON parse error it
-        keeps polling until valid or timeout.</li>
+    <li><b><code>TerminalSession</code></b> — wraps <code>vscode.window.createTerminal({ name, cwd, env })</code>
+        running the launch argv. Captures shell PID via <code>terminal.processId</code>. Owns disposal +
+        <code>onDidCloseTerminal</code>.</li>
+    <li><b><code>Mailbox</code></b> — per-run dir <code>&lt;cwd&gt;/.skynet/&lt;workerId&gt;/</code> holding
+        <code>inbox/</code>, <code>outbox/</code>, and <code>protocol.md</code>. Resolves the turn by <b>polling</b>
+        <code>outbox/turn-N.json</code> every ~500ms up to the turn timeout; the poll is also the parse-error retry
+        (on <code>ENOENT</code> or invalid JSON it keeps polling until valid or timeout). Ensures <code>.skynet/</code>
+        is gitignored. <code>dispose()</code> removes the <code>&lt;workerId&gt;</code> dir. <code>workerId</code> is
+        the only multi-worker affordance.</li>
     <li><b><code>Doorbell</code></b> — <code>terminal.show(false)</code> → <code>sendText(pingLine, false)</code> →
-        <code>sendSequence(profile.submitSequence)</code>. The ping is tiny so it dodges large-paste corruption.</li>
-    <li><b>Protocol file</b> — the mailbox protocol is written <b>once</b> to
+        <code>sendSequence(profile.submitSequence)</code>. The ping is tiny so it survives paste.</li>
+    <li><b>Protocol file</b> — the mailbox protocol is written once to
         <code>.skynet/&lt;workerId&gt;/protocol.md</code> at session start and delivered by the turn-0 readiness ping.
-        <b>The project's real instruction file (<code>AGENTS.md</code>, …) is never touched</b> — no marker-block
-        append, no teardown, no crash-leftover in a tracked file. The continuous TUI keeps the contract in context;
-        each <code>inbox/turn-N.md</code> also closes with a one-line reminder as belt-and-suspenders.
-        <span class="mut">(ponytail: deletes the /6 instruction-file bootstrap/teardown component and its marker
-        machinery entirely.)</span></li>
-    <li><b><code>SessionHarvester</code></b> — newest <code>rollout-*.jsonl</code> under
-        <code>profile.sessionDir(configDir)</code> → <code>{ sessionId, usage, rateLimits? }</code>. Read each turn
-        and at dispose.</li>
-    <li><b>Optional <code>SessionInfoProbe</code></b> — asks the agent to write
-        <code>outbox/session-info.json</code> for CLIs without a useful transcript. <b>N/A for codex</b>.</li>
-    <li><b><code>InteractiveSession</code></b> (orchestrator) — the state machine driving turns.</li>
+        The project's own instruction file (<code>AGENTS.md</code>, …) is never read or written. The continuous TUI
+        keeps the contract in context; each <code>inbox/turn-N.md</code> also closes with a one-line reminder as
+        belt-and-suspenders. <code>dispose()</code> removes it with the mailbox dir.</li>
+    <li><b><code>SessionHarvester</code></b> — finds the newest <code>rollout-*.jsonl</code> under
+        <code>profile.sessionDir(configDir)</code> (recursing <code>YYYY/MM/DD</code>), parses
+        <code>session_meta</code> + latest <code>token_count</code> into
+        <code>{ sessionId, usage, rateLimits? }</code>. Read each turn and at dispose.</li>
+    <li><b><code>SessionInfoProbe</code></b> (optional) — asks the agent to write
+        <code>outbox/session-info.json</code> for CLIs without a useful transcript. Not used for codex.</li>
+    <li><b><code>InteractiveSession</code></b> — the state machine driving turns.</li>
   </ol>
 
-  <h3>Per-CLI profile (the seam the skeletons fill)</h3>
+  <h3>Per-CLI profile</h3>
   <pre>interface InteractiveCliProfile {
   id: "codex" | "claude" | "agy";
   launchArgv(opts: InteractiveOpts): string[];
   configEnv(configDir?: string): Record&lt;string, string&gt;;
-  submitSequence: string;                              // Codex: "\t", submit bound to Tab
+  submitSequence: string;                                    // Codex: "\t" (submit bound to Tab)
   sessionDir(configDir?: string): string;
   harvest(sessionFileText: string): { sessionId?: string; usage?: WorkerUsage; rateLimits?: unknown };
   sessionInfoPrompt?(outboxPath: string): string;
 }
-// NOTE: the /6 `instructionFile` field is removed — protocol ships via
-// .skynet/<workerId>/protocol.md, so no per-CLI instruction-file knowledge is needed.
 
 const codexInteractive: InteractiveCliProfile = {
   id: "codex",
@@ -223,7 +186,14 @@ const codexInteractive: InteractiveCliProfile = {
 };</pre>
 
   <h2>Public shape</h2>
-  <pre>type TurnResult =
+  <pre>interface InteractiveOpts {
+  cwd: string; workerId: string; model?: string; configDir?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  turnTimeoutMs?: number;   // default 300_000
+  readyTimeoutMs?: number;  // default 30_000 (turn-0 readiness probe)
+}
+
+type TurnResult =
   | { status: "paused";  summary: string }
   | { status: "done";    summary: string; usage?: WorkerUsage; filesTouched?: string[] }
   | { status: "error";   reason: string; errorClass?: ErrorClass }
@@ -236,111 +206,132 @@ interface InteractiveSession extends AsyncIterable&lt;WorkerEvent&gt; {
   dispose(): Promise&lt;void&gt;;
 }
 
-interface AgentAdapter {                               // base layer — no headless run()
+interface AgentAdapter {
   readonly id: "codex" | "claude" | "agy";
-  runInteractive(opts: InteractiveOpts): Promise&lt;InteractiveSession&gt;;  // multi- or single-turn
-  // A "fast task" = start, send one turn, expect done, dispose. Not a separate path.
+  runInteractive(opts: InteractiveOpts): Promise&lt;InteractiveSession&gt;;
 }</pre>
-  <p>After a turn resolves <code>done</code>, the session is complete: further <code>send()</code> calls
-     <b>reject</b> and <code>dispose()</code> is the only valid next call. <code>TurnResult</code> maps to
-     <code>WorkerResult</code> only at the adapter boundary: <code>done→success</code>, <code>error→failed</code>,
-     <code>timeout→failed(transport)</code>, <code>crashed→failed(terminal)</code>. <code>paused</code> keeps the
-     session open.</p>
+  <p><code>send()</code> is the active driver. After a turn resolves <code>done</code>, the session is complete:
+     further <code>send()</code> calls <b>reject</b> and <code>dispose()</code> is the only valid next call. The
+     terminal stays open for inspection / human takeover until <code>dispose()</code>.</p>
+  <p><code>TurnResult</code> maps to <code>WorkerResult</code> at the adapter boundary: <code>done→success</code>,
+     <code>error→failed</code>, <code>timeout→failed(transport)</code>, <code>crashed→failed(terminal)</code>.
+     <code>paused</code> keeps the session open. Pause/resume is orchestrator-side: to pause, do not call
+     <code>send</code> again; to resume, call <code>send</code> with the next prompt.</p>
+  <p>The <code>events</code> async-iterable is passive, single-consumer, and emits a sparse stream:
+     <code>started</code>, one <code>message</code> per turn (the outbox <code>summary</code>), and <code>usage</code>
+     from the harvest when present (also copied onto the resolving <code>TurnResult</code>). It completes on
+     <code>done</code> / <code>error</code> / <code>timeout</code> / <code>crashed</code> / <code>dispose()</code>.</p>
   <div class="note">
-    <b>Enrichment note (ordering contract).</b> The <code>started</code> event carries <code>sessionId</code>, but
-    that id comes from the <b>asynchronous rollout harvest</b>, not synchronously at launch. <code>started</code> is
-    emitted once the first harvest yields a <code>sessionId</code> (or empty if unresolved by the first turn's
-    completion — the readonly <code>sessionId</code> promise is authoritative). Consumers must not assume
-    <code>started</code> precedes the first <code>send()</code>; the iterator is passive.
+    <b>Ordering.</b> <code>started</code> carries <code>sessionId</code>, but that id comes from the asynchronous
+    rollout harvest, not synchronously at launch: <code>started</code> is emitted once the first harvest yields a
+    <code>sessionId</code> (or empty if unresolved by the first turn's completion). The readonly <code>sessionId</code>
+    promise is the authoritative accessor; consumers must not assume <code>started</code> precedes the first
+    <code>send()</code>.
   </div>
 
-  <h2>Protocol contract (delivered via <code>.skynet/&lt;workerId&gt;/protocol.md</code>)</h2>
+  <h2>Protocol contract</h2>
   <div class="note">
-    Written once at session start; the turn-0 ping tells the agent to read it. For each <code>inbox/turn-N.md</code>:
-    do the work, then <b>write <code>outbox/turn-N.json</code> before you stop</b>, matching the same <code>N</code> —
-    readiness (turn 0) <code>{"status":"paused","summary":"ready"}</code> ·
+    Written once to <code>.skynet/&lt;workerId&gt;/protocol.md</code>; the turn-0 ping tells the agent to read it. For
+    each <code>inbox/turn-N.md</code>: do the work, then <b>write <code>outbox/turn-N.json</code> before you stop</b>,
+    matching the same <code>N</code> — readiness (turn 0) <code>{"status":"paused","summary":"ready"}</code> ·
     <code>{"status":"paused","summary":"…"}</code> ·
     <code>{"status":"done","summary":"…","filesTouched":["…"]}</code> ·
     <code>{"status":"error","reason":"…"}</code>. Never delete inbox files. Write the outbox in a single operation
-    (tmp + rename) as the last action of the turn. The mailbox retry stays mandatory because the agent may ignore
-    this.
+    (tmp + rename) as the last action of the turn.
   </div>
-  <p>The outbox <b>existence</b> is the turn boundary; its <code>status</code> decides the next move. For Codex,
-     usage/session-id never come from the agent — they come from the rollout harvest.</p>
+  <p>The outbox <b>existence</b> is the turn boundary; its <code>status</code> decides the next move. Usage and
+     session id never come from the agent — they come from the rollout harvest. The mailbox poll retry is mandatory
+     regardless, because the agent may ignore the single-operation instruction.</p>
 
-  <h2>Readiness handshake &amp; sad path</h2>
+  <h2>Readiness &amp; sad path</h2>
   <ul>
-    <li><b>Readiness is turn-0, separate from real work.</b> A <b>synthetic turn-0</b> only asks the agent to read
-        <code>protocol.md</code> and write <code>outbox/turn-0.json = {"status":"paused","summary":"ready"}</code>.
-        No <code>outbox/turn-0.json</code> within <code>readyTimeoutMs</code> (30s) → <b>re-send the turn-0 ping
-        once</b> before failing. Safe <b>because turn-0 does no real work</b> — re-reading + re-writing
-        <code>ready</code> is idempotent. A ~1.5s pre-ping delay reduces the sendText startup race.</li>
-    <li><b>Real-work turns (N ≥ 1) are never resent.</b> The /6 spec used turn-1 as both readiness probe and first
-        real task, so a first task slower than <code>readyTimeoutMs</code> got re-pinged and could re-execute
-        (duplicate work). Splitting readiness into an idempotent turn-0 removes that hazard; real turns' only guard is
-        <code>turnTimeoutMs</code>.</li>
-    <li><b>Turn timeout</b> (<code>turnTimeoutMs</code>, 5 min): no outbox → <code>timeout</code>. Sole guard for
-        real-work turns.</li>
-    <li><b>Crash:</b> poll the process group / walk descendants of <code>terminal.processId</code> (macOS/Linux,
-        ~3s); no <code>codex</code> descendant → <code>crashed</code>. Best-effort.</li>
+    <li><b>Readiness is turn-0.</b> A synthetic turn-0 asks the agent only to read <code>protocol.md</code> and write
+        <code>outbox/turn-0.json = {"status":"paused","summary":"ready"}</code>. None within
+        <code>readyTimeoutMs</code> (30s) → the turn-0 ping is <b>re-sent once</b> before failing. A ~1.5s pre-ping
+        delay reduces the sendText startup race.</li>
+    <li><b>Real-work turns (N ≥ 1) are never re-sent.</b> Their only guard is <code>turnTimeoutMs</code> (5 min): no
+        outbox → <code>timeout</code>.</li>
+    <li><b>Crash:</b> every ~3s, walk descendants of <code>terminal.processId</code> on macOS/Linux
+        (<code>ps -Ao pid,ppid,comm</code>); no <code>codex</code> descendant while a turn is open →
+        <code>crashed</code>. Best-effort.</li>
     <li><b>Terminal death:</b> <code>onDidCloseTerminal</code> / <code>exitStatus</code> → <code>crashed</code>.</li>
-    <li>Recovery via <code>codex resume</code> is <b>out of scope for v1</b>.</li>
+    <li>On <code>timeout</code>/<code>crashed</code>, the status is surfaced; automated recovery is out of scope for
+        v1.</li>
   </ul>
 
   <h2>Error classification</h2>
-  <p>Reuse the base-layer pure <code>classifyError(text)</code>. Inputs: agent-written <code>error.reason</code> plus
-     any stderr from terminal close. A real 429 mid-TUI may kill the session before <code>error.json</code> is
-     written; then we report <code>crashed</code>, and a later fallback US classifies from the rollout/last-known
-     state.</p>
+  <p>Reuse the pure <code>classifyError(text)</code> (<code>limit</code>/<code>transport</code>/<code>terminal</code>).
+     Inputs: the agent-written <code>error.reason</code> plus any stderr from terminal close. A rate-limit error
+     mid-TUI may kill the session before the agent writes an error outbox; that surfaces as <code>crashed</code>.</p>
 
-  <h2>Toolchain (active)</h2>
+  <h2>Toolchain</h2>
   <ul>
-    <li><b>pnpm only.</b> <code>pnpm run test:unit</code>, <code>test:integration</code>, <code>pnpm test</code>,
+    <li><b>pnpm</b> only: <code>pnpm run test:unit</code>, <code>test:integration</code>, <code>pnpm test</code>,
         <code>pnpm run lint</code> (<code>biome check .</code>).</li>
     <li><b>Unit tests (vitest):</b> colocated as <code>src/adapters/interactive/&lt;module&gt;.test.ts</code>.
-        <code>vitest.config.ts</code> includes <code>src/**/*.test.ts</code> and <b>excludes
-        <code>src/test/**</code></b>. vitest aliases <code>vscode</code> → <code>src/test-utils/vscode-mock.ts</code>,
-        so pure and fake-transport tests run headless.</li>
+        <code>vitest.config.ts</code> includes <code>src/**/*.test.ts</code> and excludes <code>src/test/**</code>.
+        vitest aliases <code>vscode</code> → <code>src/test-utils/vscode-mock.ts</code>, so pure and fake-transport
+        tests run headless.</li>
     <li><b>Integration tests (<code>@vscode/test-cli</code>):</b> under <code>src/test/**</code>, run inside a real
-        VSCode instance. Real <code>vscode.Terminal</code> transport + opt-in real-CLI e2e go here.</li>
-    <li><b>Biome</b> only. TypeScript strict, kebab-case filenames.</li>
-    <li><b>Real-CLI e2e gate:</b> env flag (e.g. <code>CODEX_INTERACTIVE_E2E</code>) so <code>pnpm test</code> does
-        not burn quota.</li>
+        VSCode instance — the real <code>vscode.Terminal</code> transport and the real-CLI e2e.</li>
+    <li><b>Biome</b> only; TypeScript strict; kebab-case filenames.</li>
+    <li><b>Real-CLI e2e</b> gated behind an env flag (e.g. <code>CODEX_INTERACTIVE_E2E</code>) so <code>pnpm test</code>
+        does not burn quota.</li>
   </ul>
 
-  <h2>Proof of function (acceptance gate)</h2>
+  <h2>Proof of function</h2>
+  <p>The terminal and clock sit behind a <code>TerminalTransport</code> interface so the core is testable without a
+     real CLI.</p>
   <table>
     <tr><th>Test</th><th>Runner</th><th>Asserts</th></tr>
-    <tr><td>readiness (turn-0)</td><td>vitest unit, fake transport</td><td>synthetic turn-0 ping fires; fake writes <code>outbox/turn-0.json = ready</code> → ready. Withheld → re-pinged once after <code>readyTimeoutMs</code>, then fails.</td></tr>
+    <tr><td>readiness (turn-0)</td><td>vitest unit, fake transport</td><td>turn-0 ping fires; fake writes <code>outbox/turn-0.json = ready</code> → ready. Withheld → re-pinged once after <code>readyTimeoutMs</code>, then fails.</td></tr>
     <tr><td>no-resend on real turns</td><td>vitest unit, fake transport</td><td>fake delays a real turn past <code>readyTimeoutMs</code> → doorbell ping fires <b>exactly once</b>; resolves via <code>turnTimeoutMs</code> only</td></tr>
-    <tr><td>turn cycle</td><td>vitest unit, fake transport</td><td><code>paused</code> / <code>done</code> (usage from fake rollout) / <code>error</code></td></tr>
+    <tr><td>turn cycle</td><td>vitest unit, fake transport</td><td><code>paused</code> / <code>done</code> (usage from a fake rollout) / <code>error</code></td></tr>
     <tr><td>timeout</td><td>vitest unit</td><td>no outbox → <code>timeout</code> after <code>turnTimeoutMs</code></td></tr>
-    <tr><td>partial outbox</td><td>vitest unit</td><td>invalid then valid JSON → resolves on valid content</td></tr>
+    <tr><td>partial outbox</td><td>vitest unit</td><td>invalid then valid JSON → resolves on the valid content</td></tr>
     <tr><td>crash</td><td>vitest unit</td><td>no child PID → <code>crashed</code></td></tr>
-    <tr><td>protocol file</td><td>vitest unit</td><td>start writes <code>protocol.md</code>; dispose removes it; <b>project <code>AGENTS.md</code> byte-identical before/after</b> (incl. absent-file case)</td></tr>
-    <tr><td>rollout parser</td><td>vitest unit, pure</td><td><code>parseCodexRollout</code> extracts sessionId + usage + rate_limits from a real captured JSONL</td></tr>
+    <tr><td>protocol file</td><td>vitest unit</td><td>start writes <code>protocol.md</code>; dispose removes it; project <code>AGENTS.md</code> byte-identical before/after (incl. absent-file case)</td></tr>
+    <tr><td>rollout parser</td><td>vitest unit, pure</td><td><code>parseCodexRollout</code> extracts sessionId + usage + rate_limits from a captured real JSONL</td></tr>
     <tr><td>doorbell</td><td>vitest unit, pure</td><td>exact <code>sendText(ping,false)</code> + <code>sendSequence("\t")</code></td></tr>
     <tr><td>terminal transport</td><td>@vscode/test-cli</td><td>real <code>vscode.Terminal</code> resolves a processId + disposes</td></tr>
-    <tr><td>submit-key gate</td><td>manual (DONE, prior worktree)</td><td>probe proves <code>sendSequence("\t")</code> submits in a real integrated terminal</td></tr>
-    <tr><td>slash-status</td><td>manual (DONE, prior worktree)</td><td><code>/status</code> raw text contains session/model/sandbox/account hints</td></tr>
-    <tr><td>integration</td><td>@vscode/test-cli, real codex, env-gated</td><td><code>startInteractive()</code> drives turn-0 + two real turns → TurnResults + harvested usage; human can still type</td></tr>
+    <tr><td>integration</td><td>@vscode/test-cli, real codex, env-gated</td><td><code>runInteractive()</code> drives turn-0 + two real turns → TurnResults + harvested usage; human can still type</td></tr>
   </table>
+
+  <h2>Decisions (rationale)</h2>
+  <ul>
+    <li><b>pty/terminal only.</b> Skynet drives CLIs through a real terminal, never headless flags or a provider SDK,
+        so there is no <code>codex exec --json</code> path. Mailbox-over-terminal is the sole mechanism; single-turn is
+        the fast path, not a separate code path.</li>
+    <li><b>Files, not screen scraping.</b> The public VSCode API cannot read a full-screen TUI's output —
+        <code>onDidWriteTerminalData</code> is permanently proposed (unusable on Marketplace) and there is no
+        screen-buffer API. All output flows through files.</li>
+    <li><b>No <code>node-pty</code>.</b> Its native ABI must match VSCode's Electron and breaks on VSCode updates, so
+        we use VSCode's own <code>createTerminal</code>.</li>
+    <li><b>Metadata from the rollout file, not agent self-report.</b> Reading codex's own <code>rollout-*.jsonl</code>
+        gives accurate usage and session id without trusting the agent.</li>
+    <li><b>Protocol in the mailbox dir, not the project instruction file.</b> Appending to a project's real
+        <code>AGENTS.md</code> mutates a tracked file and can leak on crash; <code>protocol.md</code> in the
+        disposable, gitignored <code>.skynet/</code> dir avoids both and needs no bootstrap/teardown.</li>
+    <li><b>Readiness is a separate turn-0.</b> Reusing a real work turn as the readiness probe means a first task
+        slower than <code>readyTimeoutMs</code> gets re-pinged and can re-execute (duplicate work). An idempotent
+        synthetic turn-0 makes the resend safe; real turns are never re-sent.</li>
+    <li><b>Poll, not <code>FileSystemWatcher</code>.</b> A watcher would still need a poll fallback for mid-write and
+        parse errors, so a single poll loop covers both detection and retry.</li>
+    <li><b>No anti-ban machinery.</b> Ban risk is precautionary only; the human-visible surface is a by-product of
+        running in a real terminal, not a goal we pay complexity for.</li>
+  </ul>
 
   <h2>Out of scope (v1)</h2>
   <ul>
-    <li>Base adapter layer (shared types + <code>classifyError</code>) — a <b>prerequisite</b> US (see
-        <i>Depends on</i>).</li>
+    <li>The shared adapter layer (types + <code>classifyError</code>) — a prerequisite, not this US.</li>
     <li>Multi-worker fleet / scheduler (only <code>workerId</code> path naming is reserved).</li>
-    <li>claude / agy interactive (same frame, different profile; not yet ported).</li>
-    <li>Automated crash/timeout recovery via <code>codex resume</code> (later US).</li>
-    <li>Windows child-PID polling.</li>
+    <li>claude / agy profiles (same core, different profile).</li>
+    <li>Automated crash/timeout recovery via <code>codex resume</code>.</li>
+    <li>Windows child-PID polling (macOS/Linux only in v1).</li>
     <li>Webview panel rework for the sparse event stream (smoke log only).</li>
   </ul>
 
-  <footer>
-    Skynet · Adapters epic · interactive codex mode (pty-only) · ported + reconciled 2026-07-04 · source of truth is
-    the <code>.md</code> beside this file.
-  </footer>
+  <footer>Skynet · Adapters epic · interactive codex mode · 2026-07-04</footer>
 
 </div>
 </body>
