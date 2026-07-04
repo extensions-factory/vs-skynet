@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-04
 **Epic:** Adapters · **Feature/US:** Interactive (terminal) mode — Codex
-**Status:** Ported into `active/` from the prior worktree (`6/`) spec dated
+**Status:** Ported into the `active` lane (this repo/worktree — there is no
+`active/` directory) from the prior worktree (`6/`) spec dated
 2026-06-30. Architecture is unchanged; the deltas are active-specific
 (prerequisite base layer, `active` toolchain, cross-links dropped). Probe
 evidence from the source worktree is retained as-is (see *Verified ground
@@ -49,6 +50,12 @@ that is the base codex adapter US (source: prior worktree
 `6/docs/superpowers/specs/2026-06-29-codex-adapter-design.md`, not yet ported).
 If the base layer is not present, interactive mode does not compile; it is a
 hard prerequisite, not a soft one.
+
+**Reconciliation constraint for the base port:** interactive mode consumes
+`WorkerEvent` as its event-stream type and needs `started` (carrying
+`sessionId`), per-turn `message`, and `usage` variants. When the base spec is
+ported, its `WorkerEvent` definition must be reconciled with these kinds —
+otherwise the prerequisite can land in a shape this US cannot use.
 
 ## Why this shape (recorded decisions)
 
@@ -114,7 +121,10 @@ CONSTITUTION's "probe the real binary" rule.
   overrides: `-c disable_paste_burst=true`,
   `-c 'tui.keymap.composer.submit="tab"'`, and
   `-c 'tui.keymap.composer.queue="ctrl-q"'`, then submit with
-  `sendSequence("\t")`.
+  `sendSequence("\t")`. The `queue` remap moves the composer's queue action
+  onto Ctrl-Q so it cannot collide with the Tab submit binding; the probe
+  verified this trio **as a unit** — keep all three overrides together, do not
+  cherry-pick.
 
 ## Architecture (canonical — shared by all three CLIs)
 
@@ -123,10 +133,11 @@ CLI-agnostic core in `src/adapters/interactive/`; each CLI supplies a **profile*
 ```
 ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible)
 ─────────────────────────────             ─────────────────────────────────────
-1. write inbox/turn-N.md  ───────┐
-2. sendText("Read inbox/turn-N.md└──────►  agent at prompt receives the ping
-   and follow it", false)              agent reads inbox file (its own tools)
-   + sendSequence(submitSequence)      agent works…  ◄── user may watch / take over
+1. write inbox/turn-N.md
+2. sendText("Read inbox/turn-N.md ──────►  agent at prompt receives the ping
+   and follow it", false)              agent touches outbox/turn-N.ack (receipt)
+   + sendSequence(submitSequence)      agent reads inbox file (its own tools)
+                                       agent works…  ◄── user may watch / take over
 3. poll outbox/turn-N.json  ◄──────────── agent writes outbox/turn-N.json on stop
 4. read+parse outbox → TurnResult
 5. SessionHarvester reads newest    ◄──── codex appends rollout-*.jsonl itself
@@ -137,15 +148,21 @@ ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible
    · resume = write inbox/turn-(N+1) + ping
 ──────────────────────── SAD PATH ────────────────────────
 · timeout: no outbox within T  → status 'timeout'
-· poll process group / recursive descendants: no codex → status 'crashed'
+· poll descendants of terminal.processId: no codex → status 'crashed'
 · onDidCloseTerminal / exitStatus → terminal died
 ```
 
 ### Components
 
-1. **`TerminalSession`** — wraps `vscode.window.createTerminal({ name, cwd, env })`
-   running the interactive launch argv. Captures shell PID via `terminal.processId`.
-   Owns disposal + `onDidCloseTerminal`.
+1. **`TerminalSession`** — wraps `vscode.window.createTerminal({ name, cwd, env,
+   shellPath, shellArgs })` with `shellPath` set to the `codex` binary and
+   `shellArgs` to the interactive launch argv — **no wrapper shell**. This is a
+   recorded decision: launching codex directly means `terminal.processId`
+   relates to the codex process itself (no shell/job-control process-group
+   indirection), and codex exiting closes the terminal, so
+   `onDidCloseTerminal` is the primary, reliable crash signal. Owns disposal +
+   `onDidCloseTerminal`. *(The prior-worktree probe drove the same argv; the
+   `shellPath` launch shape is re-verified when the probe is ported and re-run.)*
 2. **`Mailbox`** — per-run dir `<cwd>/.skynet/<workerId>/{inbox,outbox}/`. Writes
    `inbox/turn-N.md`; resolves the turn by **polling** `outbox/turn-N.json` (no
    `vscode.FileSystemWatcher`). (`workerId` in the path is the only multi-worker
@@ -164,6 +181,15 @@ ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible
    `commands.executeCommand("workbench.action.terminal.sendSequence", { text: profile.submitSequence })`.
    The ping is tiny (`Read .skynet/<id>/inbox/turn-N.md and follow it.`) so it
    dodges large-paste corruption.
+   **Known limitation (recorded):** `workbench.action.terminal.sendSequence`
+   has no terminal argument — it targets the *active* terminal, and
+   `show(false)` steals focus on every ping. Between `show()` and
+   `executeCommand` the user can focus another terminal or an editor, sending
+   the sequence to the wrong place. Mitigation: immediately before
+   `sendSequence`, check `window.activeTerminal === terminal`; if not, re-`show`
+   and re-check once before sending, and log a warning if it still mismatches
+   (the readiness/timeout machinery then catches the lost ping). This gets
+   worse with multiple workers — revisit before any multi-worker US.
 4. **Protocol bootstrap** — the target `cwd` is often a real project that
    already has its own `profile.instructionFile` (e.g. a real `AGENTS.md` with
    project-specific instructions the CLI reads on every launch, ours or not).
@@ -171,13 +197,28 @@ ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible
    doesn't exist), and if it does not already contain the
    `<!-- skynet-interactive:BEGIN -->` marker, **append** the mailbox protocol
    (below) wrapped in `<!-- skynet-interactive:BEGIN -->` / `<!-- skynet-interactive:END -->`
-   markers before launch. `dispose()` strips that marker block back out,
-   restoring the file to its pre-session content. This is idempotent: a
-   leftover marker block from a crashed prior session is replaced, not
-   duplicated.
+   markers before launch. `dispose()` **re-reads the file's current content
+   and strips only the marker block** — it must never write back a cached
+   pre-session snapshot, because the user (or the agent, doing its actual
+   task) may have legitimately edited the file during the session; a snapshot
+   restore would destroy those edits. This is idempotent: a leftover marker
+   block from a crashed prior session is replaced, not duplicated.
+   **Tracked-file caveat (recorded):** unlike the gitignored `.skynet/` dir,
+   `AGENTS.md` and the `.gitignore` append are *tracked* files that stay dirty
+   for the whole session — an agent that commits broadly (`git commit -am`)
+   mid-task could commit the marker block. The protocol text therefore
+   explicitly forbids committing it (see *Protocol contract*), and after a
+   crash the block lingers in the working tree until the next session launch
+   or a manual strip — an accepted v1 residue.
 5. **`SessionHarvester`** — locates the newest `rollout-*.jsonl` under
    `profile.sessionDir(configDir)`, parses `session_meta` + latest `token_count`
    into `{ sessionId, usage, rateLimits? }`. Read on each turn and at dispose.
+   **Wrong-file guard:** "newest" is ambiguous when the session dir is shared —
+   no `configDir` means the user's own `~/.codex/sessions`, where a concurrent
+   manual codex session (or a future second worker) also writes. Candidates
+   must pass two checks before being accepted: file mtime ≥ our launch time,
+   and `session_meta.cwd` equal to `opts.cwd`. If no candidate passes, harvest
+   returns empty rather than guessing.
 6. **Optional `SessionInfoProbe`** — for CLIs without a useful transcript, sends a
    tiny prompt asking the agent to write `outbox/session-info.json` with stable
    fields such as `conversationId`, `model`, `workspace`, and `artifactDirectory`.
@@ -230,7 +271,7 @@ interface InteractiveOpts {
   configDir?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   turnTimeoutMs?: number;   // default 300_000
-  readyTimeoutMs?: number;  // default 30_000 (turn-1 readiness probe)
+  readyTimeoutMs?: number;  // default 30_000 (per-turn receipt window: no ack/outbox → one re-ping)
 }
 
 // TurnResult is an interactive-private per-turn state. WorkerUsage/ErrorClass are shared (base layer).
@@ -262,10 +303,22 @@ interface AgentAdapter {
 }
 ```
 
-After a turn resolves `done`, the session is complete: further `send()` calls
-**reject** (`session already completed`) and `dispose()` is the only valid next
-call. The terminal stays open for inspection / human takeover until `dispose()`;
-interactive mode does not auto-kill it on `done`.
+**Session lifecycle rules (explicit):**
+
+- After a turn resolves `done`, the session is complete: further `send()` calls
+  **reject** (`session already completed`) and `dispose()` is the only valid
+  next call. The terminal stays open for inspection / human takeover until
+  `dispose()`; interactive mode does not auto-kill it on `done`.
+- `timeout` and `crashed` are equally terminal in v1: subsequent `send()` calls
+  reject the same way. A timeout can be a false alarm (the agent may still be
+  working and may even finish after we gave up), but v1 does not reattach —
+  the terminal stays open for the human, and automated recovery
+  (`codex resume`) is a later US.
+- At most **one turn in flight**: calling `send()` while a previous `send()`
+  is unresolved rejects (`turn already in flight`) — it does not queue.
+- `dispose()` during an in-flight turn rejects the pending `send()` promise
+  (`session disposed`) before tearing down; dispose itself never throws for
+  cleanup failures (log and continue).
 
 `TurnResult` maps back to the base-layer `WorkerResult` only at the final adapter
 boundary: `done → success`, `error → failed`, `timeout → failed` with
@@ -295,8 +348,9 @@ is one or two events per turn.)*
 
 ## Protocol contract (taught via the instruction file)
 
-> For each `inbox/turn-N.md` I give you: do the work it asks, then **write
-> `outbox/turn-N.json` before you stop**, matching the same `N`:
+> For each `inbox/turn-N.md` I give you: **first create the empty file
+> `outbox/turn-N.ack`** (so I know you received the turn), then do the work it
+> asks, then **write `outbox/turn-N.json` before you stop**, matching the same `N`:
 > - Pausing / need the next instruction → `{ "status": "paused", "summary": "<what you did>" }`
 > - Whole task complete → `{ "status": "done", "summary": "...", "filesTouched": ["..."] }`
 > - Unrecoverable error → `{ "status": "error", "reason": "..." }`
@@ -305,26 +359,42 @@ is one or two events per turn.)*
 > **last action** of a turn (write `turn-N.json.tmp`, then rename to `turn-N.json`)
 > so the orchestrator rarely sees a half-written file. The mailbox retry remains
 > mandatory because the agent may ignore this instruction.
+>
+> Never commit the `.skynet/` directory, the `.gitignore` line that mentions it,
+> or the `<!-- skynet-interactive:BEGIN/END -->` block in the instruction file —
+> they are session plumbing, not part of the task.
 
 The outbox **existence** is the turn boundary; its `status` decides the next move.
-For Codex, usage/session-id never come from the agent — they come from the rollout
-harvest. For CLIs without rollout-equivalent metadata, `session-info.json` is an
-explicit degraded fallback.
+The `.ack` file is *only* a receipt signal for the readiness/re-ping logic below —
+it never resolves a turn, and a missing ack with a present outbox is fine (the
+agent may skip the ack; the outbox always wins). For Codex, usage/session-id
+never come from the agent — they come from the rollout harvest. For CLIs without
+rollout-equivalent metadata, `session-info.json` is an explicit degraded fallback.
 
 ## Readiness handshake & sad path
 
-- **Readiness:** after launch we cannot read the terminal, so turn-1's ping is the
-  readiness probe. If no `outbox/turn-1.json` appears within `readyTimeoutMs`
-  (default 30s), re-send the ping once before declaring failure (mitigates the
-  documented sendText startup race). A short fixed pre-ping delay (~1.5s) reduces
-  the race further. *(ponytail: delay is a tuning knob, not load-bearing.)*
-- **Turn timeout** (`turnTimeoutMs`, default 5 min): no outbox → `timeout`.
-- **Crash:** poll the terminal process group (`pgrep -g <pgid>`) or recursively
-  walk descendants of `terminal.processId` on macOS/Linux every ~3s; no `codex`
-  descendant while the turn is open → `crashed`. This is best-effort; terminal
-  close and turn timeout are still the hard signals.
+- **Readiness:** after launch we cannot read the terminal, so the receipt signal
+  is the protocol's `outbox/turn-N.ack` — created by the agent *before* doing the
+  work, which separates "ping received" from "turn finished". A turn's outbox can
+  legitimately take minutes; the ack should appear in seconds. If **neither**
+  `turn-N.ack` **nor** `turn-N.json` appears within `readyTimeoutMs` (default
+  30s), re-send the ping **once** (mitigates the documented sendText startup
+  race); the re-ping does not reset any clock. A short fixed pre-ping delay
+  (~1.5s) on turn 1 reduces the race further. *(ponytail: delay is a tuning
+  knob, not load-bearing. The ack is best-effort — an agent that skips it may
+  eat one duplicate ping, which is benign: the duplicate names the same
+  `turn-N.md`, and the orchestrator accepts one `turn-N.json` regardless.)*
+- **Turn timeout** (`turnTimeoutMs`, default 5 min): no outbox → `timeout`. The
+  clock runs from the first ping of the turn; `readyTimeoutMs` is a sub-window
+  of it, not additive.
+- **Crash:** `onDidCloseTerminal` / `exitStatus` is the primary signal — with the
+  `shellPath` launch (no wrapper shell), codex dying closes the terminal. As
+  best-effort defense in depth on macOS/Linux, poll every ~3s that a `codex`
+  process still exists at/under `terminal.processId` (walk descendants; do
+  **not** use `pgrep -g` on a shell pgid — job control gives a foreground child
+  its own process group, so that finds nothing). No codex process while a turn
+  is open → `crashed`. Terminal close and turn timeout remain the hard signals.
   *(ponytail: Windows child-PID polling is TBD; macOS/Linux only in v1.)*
-- **Terminal death:** `onDidCloseTerminal` / `exitStatus` → `crashed`.
 - On `timeout`/`crashed`, the orchestrator may attempt `codex resume <sessionId>`
   (recovery is **out of scope for v1** — we surface the status; recovery is a later US).
 
@@ -370,11 +440,16 @@ testable without a real CLI. Each test's runner is called out (vitest unit vs.
 - **partial outbox** *(vitest unit, fast):* fake writes invalid JSON then valid → reader
   retries and resolves on the valid content, not the half-written one.
 - **crash** *(vitest unit, fast):* fake reports no child PID → `status:'crashed'`.
+- **readiness re-ping** *(vitest unit, fast):* fake writes neither `turn-1.ack`
+  nor `turn-1.json` within `readyTimeoutMs` → exactly one re-ping; fake writes
+  the ack early but the outbox late (after `readyTimeoutMs`, within
+  `turnTimeoutMs`) → **no** re-ping and the turn still resolves.
 - **rollout parser** *(vitest unit, pure, fast):* `parseCodexRollout(sample)` extracts `sessionId`
   from `session_meta`, usage from `token_count.info.total_token_usage`, and
   optional `rate_limits`, using a real sample JSONL captured from `codex`.
 - **doorbell** *(vitest unit, pure, fast):* asserts the exact `sendText(ping,false)` +
-  `sendSequence("\t")` calls.
+  `sendSequence("\t")` calls, plus the active-terminal guard: when the fake's
+  `activeTerminal` is not ours, one re-`show` happens before the sequence is sent.
 - **terminal transport** *(`@vscode/test-cli` integration):* real
   `vscode.Terminal` resolves a `processId` and disposes cleanly.
 - **submit-key gate** *(manual, pre-plan):* **DONE (prior worktree)** —
