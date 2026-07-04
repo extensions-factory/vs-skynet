@@ -28,3 +28,21 @@ a provider SDK. Do not add provider SDK or API-client dependencies for
 agent orchestration - pty/terminal integration only. See
 `docs/superpowers/specs/2026-07-02-skynet-discovery.md` (Risks -> Legal/ToS)
 for why.
+
+## CLI integration
+
+Each CLI's surface is unversioned and unstable, so **probe the real binary
+before building against it** - never assume flags, session-log formats,
+file locations, or capabilities from memory or docs.
+
+- Before writing or changing a provider adapter, verify against the
+  installed CLI: what commands/flags it exposes, where it writes session
+  logs (e.g. codex `rollout-*.jsonl`), their actual shape, and which parts
+  of the VSCode terminal API are real vs. proposed. An earlier assumption
+  (`onDidWriteTerminalData` streaming) was falsified this way; see
+  `docs/ARCHITECTURE.md` (Interaction mechanism).
+- Capture what you find as a recorded fixture (real session-log / outbox
+  sample) and test parsers against it, so an upstream change breaks a test,
+  not a user.
+- Confirm the CLI is installed and signed in before use; surface a clear
+  fix when it is not, rather than failing mid-task.
