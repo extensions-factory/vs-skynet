@@ -3,35 +3,38 @@
 **Date:** 2026-07-04
 **Epic:** Adapters · **Feature/US:** Interactive (terminal) mode — Codex
 **Status:** Ported into `active/` from the prior worktree (`6/`) spec dated
-2026-06-30. Architecture is unchanged; the deltas are active-specific
-(prerequisite base layer, `active` toolchain, cross-links dropped). Probe
+2026-06-30, then reconciled with `active`'s newer `CONSTITUTION.md`. The
+reconciliation is not cosmetic: the constitution mandates **pty/terminal only,
+never headless flags**, so the /6 "second run mode alongside `codex exec --json`"
+framing is dropped — interactive mailbox is now the *only* run mode. Probe
 evidence from the source worktree is retained as-is (see *Verified ground
 truth*) — no fresh re-probe was run for this port.
 
 ## Goal
 
-A **second run mode** for the codex adapter that drives `codex` as a **live
-interactive TUI session inside a VSCode terminal**, instead of the one-shot
-`codex exec --json` path. The orchestrator pastes prompts *into* the terminal and
-reads results *out* of files the agent writes. This buys **multi-turn steering
-(paused/resumed turns toward one task completion) + pause/resume in one
-session** and a human-like execution surface, while keeping parsing robust.
+Drive `codex` as a **live interactive TUI session inside a VSCode terminal**. The
+orchestrator pastes prompts *into* the terminal and reads results *out* of files
+the agent writes. This buys **multi-turn steering (paused/resumed turns toward one
+task completion) + pause/resume in one session** and a human-like execution
+surface, while keeping parsing robust.
+
+This is the **only** codex run mode. Per `CONSTITUTION.md` (pty/terminal only, no
+headless flags, no provider SDK), there is **no `codex exec --json` path**. A
+"fast task" is simply a **single-turn** mailbox session: one inbox turn, the agent
+returns `done`, dispose. Multi-turn and single-turn are the same mechanism at
+different turn counts.
 
 This document is the **canonical frame** for interactive mode across all three
 CLIs. The claude and agy interactive specs (skeletons that restate their
 CLI-specific deltas against this one) are **not yet ported to `active/`**; only
 codex is in scope here.
 
-**Add alongside, do not replace.** Interactive mode is a new sibling of the
-one-shot `runCodex` (`codex exec --json`, the base codex adapter — see *Depends
-on*). It adds a run mode; it does not replace the one-shot path, which stays for
-fast tasks.
-
 ## Depends on (prerequisite)
 
-`active/` is currently a bare scaffold (only `src/extension.ts`); the base
-adapter layer this spec builds on **does not exist yet** and must land first as
-its own upstream US:
+`active/` is currently a bare scaffold (only `src/extension.ts`); the base adapter
+layer this spec builds on **does not exist yet** and must land first as its own
+upstream US. Reconciled with the constitution, the base layer is **types +
+classifier only — no headless one-shot adapter**:
 
 - **Shared adapter types** — `src/adapters/types.ts`: `ErrorClass`
   (`"limit" | "transport" | "terminal"`), `WorkerEvent`, `WorkerUsage`
@@ -40,21 +43,20 @@ its own upstream US:
   `AgentAdapter`.
 - **Error classifier** — `src/adapters/classify.ts`: pure
   `classifyError(text): ErrorClass`.
-- **One-shot codex adapter** — `src/adapters/codex/codex-adapter.ts`:
-  `runCodex` / `codexAdapter.run` (`codex exec --json`). Interactive mode extends
-  this same adapter with `runInteractive()`.
 
-This spec references those symbols as given. It does **not** re-specify them —
-that is the base codex adapter US (source: prior worktree
-`6/docs/superpowers/specs/2026-06-29-codex-adapter-design.md`, not yet ported).
-If the base layer is not present, interactive mode does not compile; it is a
-hard prerequisite, not a soft one.
+There is deliberately **no** `runCodex`/`codex exec --json` dependency; the /6
+one-shot adapter (`6/…/2026-06-29-codex-adapter-design.md`) is superseded by
+single-turn interactive mode. If the two symbols above are absent, interactive
+mode does not compile; they are a hard prerequisite.
 
 ## Why this shape (recorded decisions)
 
+- **pty/terminal only (constitution).** No headless `exec`, no provider SDK. The
+  mailbox-over-a-real-terminal design is the *only* mechanism; single-turn is the
+  fast path, not a separate headless code path.
 - **Ban risk is precautionary only** (no observed bans). So we build **no
   anti-ban machinery**; the human-like surface is a cheap by-product of running
-  interactively in a real terminal, not a goal we pay complexity for.
+  interactively in a real terminal.
 - **Control is the real win:** multi-turn, pause/resume, live human takeover.
 - **Public VSCode API cannot read a full-screen TUI's output.** Shell Integration
   only segments normal command/output pairs; a TUI is one endless execution.
@@ -68,6 +70,9 @@ hard prerequisite, not a soft one.
   unsupported, breaks on VSCode updates. → Use VSCode's own `createTerminal`.
 - **Session metadata is read from the CLI's own rollout file, not the screen** —
   accurate usage/session-id without trusting agent self-report.
+- **Protocol never touches the project's real instruction file.** It lives in the
+  disposable, gitignored mailbox dir and is delivered by the readiness ping (see
+  *Protocol contract*). Rationale in the readiness/component notes below.
 
 ## Verified ground truth (real CLI)
 
@@ -81,8 +86,7 @@ CONSTITUTION's "probe the real binary" rule.
 
 - **Launch interactive:** `codex -C <cwd> -m <model> -s workspace-write -a never`
   (or `--dangerously-bypass-approvals-and-sandbox` / `--yolo` to never block on
-  approvals). `codex exec` is the non-interactive path we already use. Flags are
-  global (shared by `codex`, `exec`, `resume`).
+  approvals). Flags are global (shared by `codex`, `resume`).
   > [!NOTE]
   > **VERIFIED** (prior worktree) — `terminal-probe.test.ts` (`TERMINAL_PROBE=1`,
   > run 2026-07-01) launches with this exact `-a never` argv and completes a
@@ -109,7 +113,7 @@ CONSTITUTION's "probe the real binary" rule.
 - **`CODEX_HOME`** relocates the whole home (config + `sessions/`), so per-account
   isolation (via `opts.configDir`) moves the rollout files too.
 - **Submit key:** VSCode terminal injection is paste-like to Codex. Plain Enter
-  (`\r`) and kitty Enter (`[13u`) both land as newlines in the composer.
+  (`\r`) and kitty Enter (`[13u`) both land as newlines in the composer.
   The verified automation path is to launch Codex with process-local config
   overrides: `-c disable_paste_burst=true`,
   `-c 'tui.keymap.composer.submit="tab"'`, and
@@ -123,9 +127,14 @@ CLI-agnostic core in `src/adapters/interactive/`; each CLI supplies a **profile*
 ```
 ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible)
 ─────────────────────────────             ─────────────────────────────────────
+0. write .skynet/<id>/protocol.md
+   + inbox/turn-0.md (readiness)
+   sendText("Read protocol.md, then ──────►  agent reads protocol.md (its own tools)
+   inbox/turn-0.md and follow it")       agent writes outbox/turn-0.json = ready
+   + sendSequence(submitSequence)        (idempotent: safe to re-ping if lost)
 1. write inbox/turn-N.md  ───────┐
 2. sendText("Read inbox/turn-N.md└──────►  agent at prompt receives the ping
-   and follow it", false)              agent reads inbox file (its own tools)
+   and follow it", false)              agent reads inbox file, does the work
    + sendSequence(submitSequence)      agent works…  ◄── user may watch / take over
 3. poll outbox/turn-N.json  ◄──────────── agent writes outbox/turn-N.json on stop
 4. read+parse outbox → TurnResult
@@ -135,6 +144,7 @@ ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible
 6. decide next turn:
    · pause  = withhold next ping
    · resume = write inbox/turn-(N+1) + ping
+   · single-turn "fast task" = one real turn, expect done, dispose
 ──────────────────────── SAD PATH ────────────────────────
 · timeout: no outbox within T  → status 'timeout'
 · poll process group / recursive descendants: no codex → status 'crashed'
@@ -146,35 +156,37 @@ ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible
 1. **`TerminalSession`** — wraps `vscode.window.createTerminal({ name, cwd, env })`
    running the interactive launch argv. Captures shell PID via `terminal.processId`.
    Owns disposal + `onDidCloseTerminal`.
-2. **`Mailbox`** — per-run dir `<cwd>/.skynet/<workerId>/{inbox,outbox}/`. Writes
-   `inbox/turn-N.md`; resolves the turn by **polling** `outbox/turn-N.json` (no
-   `vscode.FileSystemWatcher`). (`workerId` in the path is the only multi-worker
-   affordance in v1.) On first run, ensure `.skynet/` is in the repo `.gitignore`
-   (append if absent) so the mailbox never shows in `git status`. `dispose()`
-   removes the `<workerId>` dir. The protocol teaches tmp+rename; the read is a
-   **poll loop (every ~500ms) with the same timeout as the turn** — it is the
-   only detection mechanism, and it doubles as the parse-error retry when the
-   agent writes directly or the poll sees a file mid-write: on `ENOENT` or a
-   JSON parse error it keeps polling until the file is valid or the turn times
-   out. *(ponytail: `terminal-probe.test.ts` proved a plain poll loop end-to-end
-   for both codex and agy-ultra; a `FileSystemWatcher` would still need this same
-   poll as its parse-retry fallback, so it buys nothing — one mechanism, not two.
-   Poll interval is a tuning knob, not load-bearing.)*
+2. **`Mailbox`** — per-run dir `<cwd>/.skynet/<workerId>/{inbox,outbox}/` plus
+   `<cwd>/.skynet/<workerId>/protocol.md`. Writes `inbox/turn-N.md`; resolves the
+   turn by **polling** `outbox/turn-N.json` (no `vscode.FileSystemWatcher`).
+   (`workerId` in the path is the only multi-worker affordance in v1.) On first
+   run, ensure `.skynet/` is in the repo `.gitignore` (append if absent) so the
+   mailbox never shows in `git status`. `dispose()` removes the `<workerId>` dir
+   (protocol + inbox + outbox all vanish together). The protocol teaches
+   tmp+rename; the read is a **poll loop (every ~500ms) with the same timeout as
+   the turn** — it is the only detection mechanism, and it doubles as the
+   parse-error retry when the agent writes directly or the poll sees a file
+   mid-write: on `ENOENT` or a JSON parse error it keeps polling until the file is
+   valid or the turn times out. *(ponytail: `terminal-probe.test.ts` proved a
+   plain poll loop end-to-end for both codex and agy-ultra; a `FileSystemWatcher`
+   would still need this same poll as its parse-retry fallback, so it buys nothing
+   — one mechanism, not two. Poll interval is a tuning knob, not load-bearing.)*
 3. **`Doorbell`** — `terminal.show(false)` → `sendText(pingLine, false)` →
    `commands.executeCommand("workbench.action.terminal.sendSequence", { text: profile.submitSequence })`.
    The ping is tiny (`Read .skynet/<id>/inbox/turn-N.md and follow it.`) so it
    dodges large-paste corruption.
-4. **Protocol bootstrap** — the target `cwd` is often a real project that
-   already has its own `profile.instructionFile` (e.g. a real `AGENTS.md` with
-   project-specific instructions the CLI reads on every launch, ours or not).
-   **Never overwrite it.** Read the existing content (empty string if the file
-   doesn't exist), and if it does not already contain the
-   `<!-- skynet-interactive:BEGIN -->` marker, **append** the mailbox protocol
-   (below) wrapped in `<!-- skynet-interactive:BEGIN -->` / `<!-- skynet-interactive:END -->`
-   markers before launch. `dispose()` strips that marker block back out,
-   restoring the file to its pre-session content. This is idempotent: a
-   leftover marker block from a crashed prior session is replaced, not
-   duplicated.
+4. **Protocol file** — the mailbox protocol (below) is written **once** to
+   `.skynet/<workerId>/protocol.md` at session start and delivered by the turn-0
+   readiness ping (`Read .skynet/<id>/protocol.md, then …`). **The project's real
+   instruction file (`AGENTS.md`, `CLAUDE.md`, …) is never touched** — no
+   marker-block append, no teardown, no crash-leftover in a tracked project file.
+   Because the codex session is one continuous TUI, reading `protocol.md` at
+   turn-0 keeps the contract in context for every later turn; each `inbox/turn-N.md`
+   also closes with a one-line reminder (`write outbox/turn-N.json per protocol`)
+   as belt-and-suspenders. `dispose()` removes `protocol.md` with the rest of the
+   mailbox dir. *(ponytail: this deletes the /6 instruction-file
+   bootstrap/teardown component and its marker machinery entirely — a file in a
+   disposable dir needs neither.)*
 5. **`SessionHarvester`** — locates the newest `rollout-*.jsonl` under
    `profile.sessionDir(configDir)`, parses `session_meta` + latest `token_count`
    into `{ sessionId, usage, rateLimits? }`. Read on each turn and at dispose.
@@ -191,13 +203,16 @@ interface InteractiveCliProfile {
   id: "codex" | "claude" | "agy";
   launchArgv(opts: InteractiveOpts): string[];        // interactive TUI launch
   configEnv(configDir?: string): Record<string, string>; // CODEX_HOME / CLAUDE_CONFIG_DIR / HOME
-  instructionFile: string;                             // "AGENTS.md" | "CLAUDE.md" | ?
   submitSequence: string;                              // Codex uses "\t" with submit bound to Tab
   sessionDir(configDir?: string): string;              // absolute path; no "~" shorthand
   harvest(sessionFileText: string): { sessionId?: string; usage?: WorkerUsage; rateLimits?: unknown };
   sessionInfoPrompt?(outboxPath: string): string;       // fallback when harvest() cannot provide session id
 }
 ```
+
+*(The `/6` profile had an `instructionFile` field for the AGENTS.md-append
+delivery; it is removed — protocol now ships via `protocol.md` in the mailbox
+dir, so no per-CLI instruction-file knowledge is needed.)*
 
 **Codex profile (fully specified):**
 
@@ -210,7 +225,6 @@ const codexInteractive: InteractiveCliProfile = {
                       "-c", 'tui.keymap.composer.submit="tab"',
                       "-c", 'tui.keymap.composer.queue="ctrl-q"'],
   configEnv: (dir) => dir ? { CODEX_HOME: dir } : {},
-  instructionFile: "AGENTS.md",
   submitSequence: "\t",                                // probe-verified VSCode submit path
   sessionDir: (dir) => dir ? path.join(dir, "sessions")
                            : path.join(os.homedir(), ".codex", "sessions"),
@@ -230,7 +244,7 @@ interface InteractiveOpts {
   configDir?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   turnTimeoutMs?: number;   // default 300_000
-  readyTimeoutMs?: number;  // default 30_000 (turn-1 readiness probe)
+  readyTimeoutMs?: number;  // default 30_000 (turn-0 readiness probe)
 }
 
 // TurnResult is an interactive-private per-turn state. WorkerUsage/ErrorClass are shared (base layer).
@@ -244,21 +258,19 @@ type TurnResult =
 interface InteractiveSession extends AsyncIterable<WorkerEvent> {
   send(prompt: string): Promise<TurnResult>;   // write inbox + doorbell; resolve on outbox / timeout / crash
   readonly sessionId: Promise<string | undefined>;  // from rollout harvest or CLI fallback
-  dispose(): Promise<void>;                     // strip instruction-file marker block,
-                                                 // remove mailbox dir, kill terminal (async cleanup)
+  dispose(): Promise<void>;                     // remove mailbox dir, kill terminal (async cleanup)
 }
 ```
 
-**Integration seam.** Interactive mode is a *second run mode on the existing
-adapter*, not a parallel API. `AgentAdapter` (base layer) gains an optional
-method; the standalone `startInteractive(profile, opts)` is the shared core the
-codex adapter delegates to.
+**Integration seam.** Interactive mailbox is the *only* mechanism. `AgentAdapter`
+(base layer) exposes it; there is no separate headless `run()`.
 
 ```ts
 interface AgentAdapter {
   readonly id: "codex" | "claude" | "agy";
-  run(opts: RunOpts): WorkerRun;                                  // existing one-shot exec
-  runInteractive?(opts: InteractiveOpts): Promise<InteractiveSession>; // new; delegates to startInteractive(codexInteractive, opts)
+  runInteractive(opts: InteractiveOpts): Promise<InteractiveSession>; // multi-turn or single-turn
+  // A "fast task" is a convenience over the same session: start, send one turn,
+  // expect `done`, dispose. It is not a separate code path.
 }
 ```
 
@@ -271,8 +283,6 @@ interactive mode does not auto-kill it on `done`.
 boundary: `done → success`, `error → failed`, `timeout → failed` with
 `errorClass:"transport"`, `crashed → failed` with `errorClass:"terminal"`.
 `paused` is not a `WorkerResult`; it keeps the same `InteractiveSession` open.
-Mode selection is orchestrator/UI policy and out of scope for this US; the
-adapter supports one-shot `run()` and interactive `runInteractive()` concurrently.
 
 `pause`/`resume` is orchestrator-side: to pause, do not call `send` again; to
 resume, call `send` with the next prompt. The `events` async-iterable emits a
@@ -293,10 +303,14 @@ single-consumer like `WorkerRun`, and completes on `done` / `error` / `timeout` 
 `crashed` / `dispose()`. *(ponytail: no custom backpressure in v1; event volume
 is one or two events per turn.)*
 
-## Protocol contract (taught via the instruction file)
+## Protocol contract (delivered via `.skynet/<workerId>/protocol.md`)
+
+Written once to the mailbox dir at session start; the turn-0 readiness ping tells
+the agent to read it. Contents:
 
 > For each `inbox/turn-N.md` I give you: do the work it asks, then **write
 > `outbox/turn-N.json` before you stop**, matching the same `N`:
+> - Readiness (turn 0) → `{ "status": "paused", "summary": "ready" }` after reading this file
 > - Pausing / need the next instruction → `{ "status": "paused", "summary": "<what you did>" }`
 > - Whole task complete → `{ "status": "done", "summary": "...", "filesTouched": ["..."] }`
 > - Unrecoverable error → `{ "status": "error", "reason": "..." }`
@@ -313,12 +327,22 @@ explicit degraded fallback.
 
 ## Readiness handshake & sad path
 
-- **Readiness:** after launch we cannot read the terminal, so turn-1's ping is the
-  readiness probe. If no `outbox/turn-1.json` appears within `readyTimeoutMs`
-  (default 30s), re-send the ping once before declaring failure (mitigates the
-  documented sendText startup race). A short fixed pre-ping delay (~1.5s) reduces
-  the race further. *(ponytail: delay is a tuning knob, not load-bearing.)*
-- **Turn timeout** (`turnTimeoutMs`, default 5 min): no outbox → `timeout`.
+- **Readiness is turn-0, separate from real work.** After launch we cannot read
+  the terminal, so a **synthetic turn-0** is the readiness probe: it only asks the
+  agent to read `protocol.md` and write `outbox/turn-0.json = {"status":"paused",
+  "summary":"ready"}`. If no `outbox/turn-0.json` appears within `readyTimeoutMs`
+  (default 30s), **re-send the turn-0 ping once** before declaring failure
+  (mitigates the documented sendText startup race). This resend is safe *because
+  turn-0 does no real work* — re-reading `protocol.md` and re-writing `ready` is
+  idempotent. A short fixed pre-ping delay (~1.5s) reduces the race further.
+  *(ponytail: delay is a tuning knob, not load-bearing.)*
+  > **Why not re-ping real turns:** the /6 spec used turn-1 as *both* readiness
+  > probe and first real task, so a first task slower than `readyTimeoutMs` got
+  > re-pinged and the agent could re-execute it (duplicate work). Splitting
+  > readiness into an idempotent turn-0 removes that hazard; **real-work turns
+  > (N ≥ 1) are never resent** — their only guard is `turnTimeoutMs`.
+- **Turn timeout** (`turnTimeoutMs`, default 5 min): no outbox → `timeout`. This
+  is the sole guard for real-work turns.
 - **Crash:** poll the terminal process group (`pgrep -g <pgid>`) or recursively
   walk descendants of `terminal.processId` on macOS/Linux every ~3s; no `codex`
   descendant while the turn is open → `crashed`. This is best-effort; terminal
@@ -363,17 +387,29 @@ Abstract the terminal + clock behind a `TerminalTransport` interface so the core
 testable without a real CLI. Each test's runner is called out (vitest unit vs.
 `@vscode/test-cli` integration) per the toolchain above.
 
-- **turn cycle** *(vitest unit, fake transport, fast):* `send()` → fake writes
+- **readiness (turn-0)** *(vitest unit, fake transport):* `send`-less start → the
+  synthetic turn-0 ping fires; fake writes `outbox/turn-0.json = ready` → session
+  becomes ready. If the fake withholds turn-0, the ping is **re-sent once** after
+  `readyTimeoutMs`, then the session fails ready.
+- **no-resend on real turns** *(vitest unit, fake transport):* fake delays a real
+  turn past `readyTimeoutMs` → assert the doorbell ping for that turn fires
+  **exactly once** (no duplicate execution); the turn resolves via `turnTimeoutMs`
+  only.
+- **turn cycle** *(vitest unit, fake transport):* `send()` → fake writes
   `outbox/turn-N.json` → assert `TurnResult` for each of `paused` / `done` (with
   usage from a fake rollout) / `error`.
-- **timeout** *(vitest unit, fast):* fake never writes outbox → `status:'timeout'` after `turnTimeoutMs`.
-- **partial outbox** *(vitest unit, fast):* fake writes invalid JSON then valid → reader
+- **timeout** *(vitest unit):* fake never writes outbox → `status:'timeout'` after `turnTimeoutMs`.
+- **partial outbox** *(vitest unit):* fake writes invalid JSON then valid → reader
   retries and resolves on the valid content, not the half-written one.
-- **crash** *(vitest unit, fast):* fake reports no child PID → `status:'crashed'`.
-- **rollout parser** *(vitest unit, pure, fast):* `parseCodexRollout(sample)` extracts `sessionId`
+- **crash** *(vitest unit):* fake reports no child PID → `status:'crashed'`.
+- **protocol file** *(vitest unit):* start writes `.skynet/<id>/protocol.md` with
+  the contract text; `dispose()` removes it with the mailbox dir; **the project's
+  `AGENTS.md` is never created or modified** (assert byte-identical before/after,
+  including the absent-file case).
+- **rollout parser** *(vitest unit, pure):* `parseCodexRollout(sample)` extracts `sessionId`
   from `session_meta`, usage from `token_count.info.total_token_usage`, and
   optional `rate_limits`, using a real sample JSONL captured from `codex`.
-- **doorbell** *(vitest unit, pure, fast):* asserts the exact `sendText(ping,false)` +
+- **doorbell** *(vitest unit, pure):* asserts the exact `sendText(ping,false)` +
   `sendSequence("\t")` calls.
 - **terminal transport** *(`@vscode/test-cli` integration):* real
   `vscode.Terminal` resolves a `processId` and disposes cleanly.
@@ -390,21 +426,18 @@ testable without a real CLI. Each test's runner is called out (vitest unit vs.
   harvest is authoritative); the same probe mechanism is proven for agy-ultra,
   which needs the fallback.
 - **integration** *(`@vscode/test-cli`, real codex, slow, uses quota, env-gated):*
-  the probe proves the *mechanism* (mailbox + doorbell + pause/resume/done)
-  against a real CLI, but drives it with probe-local helpers, not the production
-  `InteractiveSession` code. A remaining task: an integration test that calls
-  `startInteractive(codexInteractive, opts)` directly, `send()`s two turns, and
-  asserts outbox-derived `TurnResult`s + harvested usage from the real rollout
-  file + a live human can still type in the terminal.
+  calls `startInteractive(codexInteractive, opts)` directly, `send()`s a turn-0
+  readiness plus two real turns, and asserts outbox-derived `TurnResult`s +
+  harvested usage from the real rollout file + a live human can still type in the
+  terminal.
 
 ## Out of scope (v1)
 
-- Base codex adapter (shared types + `classifyError` + one-shot `runCodex`) — a
-  **prerequisite** US, not this one (see *Depends on*).
+- Base adapter layer (shared types + `classifyError`) — a **prerequisite** US, not
+  this one (see *Depends on*).
 - Multi-worker fleet / scheduler (only `workerId` path naming is reserved).
 - claude / agy interactive (their skeleton specs; same frame, different profile;
   not yet ported to `active/`).
 - Automated crash/timeout **recovery** via `codex resume` (later US).
 - Windows child-PID polling.
 - Webview panel rework for the sparse interactive event stream (smoke log only).
-- Replacing `codex exec --json` (it stays for one-shot tasks).
