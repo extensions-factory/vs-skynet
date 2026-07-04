@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Product Roadmap</title>
+<style>
+  :root{
+    --bg:#0e0e10; --panel:#161618; --panel-2:#1d1d20;
+    --text:#ececec; --muted:#9a9aa2; --line:#2a2a2e;
+    --open:#19c3c9; --dev:#9b6bff; --test:#f5a623; --ready:#37c871; --released:#ff4d8d;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:0 32px}
+  a{color:inherit}
+
+  /* ---- Hero ---- */
+  .hero{padding:88px 0 56px; border-bottom:1px solid var(--line)}
+  .hero h1{font-size:clamp(34px,5vw,56px); line-height:1.1; margin:0 0 32px; letter-spacing:-.02em}
+  .hero .intro{display:grid; grid-template-columns:1fr 1fr; gap:40px; max-width:920px}
+  .hero .intro p{margin:0; color:var(--muted); font-size:16px}
+
+  /* ---- Legend / filter ---- */
+  .legend{position:sticky; top:0; z-index:20; background:rgba(14,14,16,.85);
+    backdrop-filter:blur(10px); border-bottom:1px solid var(--line); padding:16px 0}
+  .legend .wrap{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+  .legend .label{color:var(--muted); font-size:13px; margin-right:6px}
+  .chip{display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+    border:1px solid var(--line); background:var(--panel); color:var(--text);
+    padding:6px 14px; border-radius:999px; font-size:13px; font-weight:500; transition:.15s}
+  .chip:hover{border-color:#3a3a40}
+  .chip .dot{width:9px; height:9px; border-radius:50%}
+  .chip[data-status="open"] .dot{background:var(--open)}
+  .chip[data-status="dev"] .dot{background:var(--dev)}
+  .chip[data-status="test"] .dot{background:var(--test)}
+  .chip[data-status="ready"] .dot{background:var(--ready)}
+  .chip[data-status="released"] .dot{background:var(--released)}
+  .chip.active{background:#fff; color:#0e0e10; border-color:#fff}
+  .chip.active .dot{box-shadow:0 0 0 2px rgba(0,0,0,.15)}
+  .chip.all{font-weight:600}
+
+  /* ---- Summary cards ---- */
+  .summary{padding:56px 0}
+  .cards{display:grid; grid-template-columns:repeat(3,1fr); gap:20px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:24px}
+  .card h3{margin:0 0 16px; font-size:15px; letter-spacing:.01em}
+  .card ul{margin:0; padding:0; list-style:none}
+  .card li{color:var(--muted); font-size:14px; padding:7px 0; border-top:1px solid var(--line)}
+  .card li:first-child{border-top:0; padding-top:0}
+
+  /* ---- Detail sections ---- */
+  .section{padding:56px 0; border-top:1px solid var(--line)}
+  .section > .eyebrow{color:var(--muted); font-size:13px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; margin:0 0 6px}
+  .section > h2{font-size:clamp(26px,3.4vw,40px); margin:0 0 12px; letter-spacing:-.015em}
+  .section > .lead{color:var(--muted); max-width:760px; margin:0 0 40px; font-size:16px}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:28px 56px}
+  .item{padding-bottom:4px}
+  .item .t{font-weight:600; font-size:15px; color:inherit;
+    text-decoration:underline; text-decoration-color:var(--muted);
+    text-underline-offset:3px; text-decoration-thickness:1px; transition:.15s}
+  .item .t::after{content:"\2197"; display:inline-block; margin-left:3px;
+    font-size:.85em; color:var(--muted); transition:.15s}
+  .item .t:hover{text-decoration-color:var(--text)}
+  .item .t:hover::after{color:var(--text); transform:translate(1px,-1px)}
+  .item .d{color:var(--muted); font-size:14px; margin:4px 0 10px}
+
+  /* ---- Status badge ---- */
+  .badge{display:inline-block; font-size:11px; font-weight:600; letter-spacing:.02em;
+    padding:3px 10px; border-radius:999px; color:#0e0e10; white-space:nowrap}
+  .badge.open{background:var(--open)}
+  .badge.dev{background:var(--dev); color:#fff}
+  .badge.test{background:var(--test)}
+  .badge.ready{background:var(--ready)}
+  .badge.released{background:var(--released); color:#fff}
+
+  /* ---- Filtering ---- */
+  .item.hide,.section.hide,.empty-note.hide{display:none}
+  .empty-note{padding:80px 0; text-align:center; color:var(--muted)}
+
+  footer{border-top:1px solid var(--line); padding:40px 0; color:var(--muted); font-size:13px}
+
+  @media(max-width:820px){
+    .hero .intro{grid-template-columns:1fr}
+    .cards{grid-template-columns:1fr}
+    .grid{grid-template-columns:1fr; gap:24px}
+    .wrap{padding:0 20px}
+  }
+</style>
+</head>
+<body>
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="wrap">
+      <h1>Skynet — Product Roadmap</h1>
+      <div class="intro">
+        <p>Skynet turns CLI coding agents (Codex CLI, Claude Code, Antigravity) into a real Scrum team — the developer as Scrum Master. Every agent is a <strong>worker = model + role + soul</strong>, driven interactively through a visible terminal, never a headless flag or SDK.</p>
+        <p>Three levels: <strong>Epics</strong> (cards below), the <strong>Features</strong> in each, and the <strong>User Stories</strong> under each feature. Filter by status with the legend. Narrative vision, release plan, and risk gates live in <code>ROADMAP.md</code>; architecture in <code>ARCHITECTURE.md</code>.</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- LEGEND / FILTER -->
+  <nav class="legend">
+    <div class="wrap">
+      <span class="label">Filter:</span>
+      <span class="chip all active" data-status="all">All</span>
+      <span class="chip" data-status="open"><span class="dot"></span>Open</span>
+      <span class="chip" data-status="dev"><span class="dot"></span>In development</span>
+      <span class="chip" data-status="test"><span class="dot"></span>In testing</span>
+      <span class="chip" data-status="ready"><span class="dot"></span>Ready</span>
+      <span class="chip" data-status="released"><span class="dot"></span>Released</span>
+    </div>
+  </nav>
+
+  <!-- SUMMARY CARDS -->
+  <section class="summary">
+    <div class="wrap cards-wrap">
+      <div class="cards">
+        <div class="card">
+          <h3>Single agent session</h3>
+          <ul>
+            <li>Codex CLI adapter</li>
+            <li>Session lifecycle</li>
+            <li>Task hand-off</li>
+            <li>Transparency</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Parallel orchestration</h3>
+          <ul>
+            <li>Session manager</li>
+            <li>Git worktree isolation</li>
+            <li>Concurrency limits</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Worker engineering: Role &amp; Soul</h3>
+          <ul>
+            <li>Roles</li>
+            <li>Souls</li>
+            <li>Harness compilation</li>
+            <li>Worker memory &amp; growth</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Best-worker matching</h3>
+          <ul>
+            <li>Task profiling</li>
+            <li>Suitability matching</li>
+            <li>Matching policy</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Multi-account &amp; capacity</h3>
+          <ul>
+            <li>Account profiles</li>
+            <li>Quota tracking</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>The Scrum loop</h3>
+          <ul>
+            <li>Backlog &amp; sprint planning</li>
+            <li>Kanban board</li>
+            <li>Review gates</li>
+            <li>Standups</li>
+            <li>Retrospectives</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Trust &amp; ToS posture</h3>
+          <ul>
+            <li>Trust &amp; ToS posture</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Quality &amp; distribution</h3>
+          <ul>
+            <li>CI hardening</li>
+            <li>Adapter contract tests</li>
+            <li>Harness evaluation suite</li>
+            <li>Marketplace release</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Single agent session</p>
+      <h2>Codex CLI adapter</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Start an agent in one command</span>
+          <div class="d">Launch a CLI agent in a VSCode terminal with no setup or API key.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Detect missing or signed-out CLI</span>
+          <div class="d">Tell the user when the CLI is not installed or not signed in, with a fix.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="docs/superpowers/specs/2026-07-04-interactive-codex-design.md" class="t">Multi-turn interactive terminal mode</a>
+          <div class="d">Drive codex as a live TUI in a VSCode terminal: multi-turn steering with pause/resume in one session, via a file mailbox.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Single agent session</p>
+      <h2>Session lifecycle</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Coarse live status</span>
+          <div class="d">Show launching/ready/busy/awaiting-input/done from the mailbox lifecycle.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Awaiting-input notification</span>
+          <div class="d">Notify when an agent is parked waiting on the user.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Single agent session</p>
+      <h2>Task hand-off</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Send a task from the palette</span>
+          <div class="d">Delegate a task or prompt to a running agent from the command palette.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Stop an agent</span>
+          <div class="d">Stop any agent at any time to stay in control.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Single agent session</p>
+      <h2>Transparency</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Full conversation in a terminal tab</span>
+          <div class="d">Everything the agent does is visible and takeover-able in a normal terminal (also satisfies US7.3).</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Parallel orchestration</p>
+      <h2>Session manager</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Concurrent sessions in a sidebar</span>
+          <div class="d">Run several agents at once, listed with status in a sidebar.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Parallel orchestration</p>
+      <h2>Git worktree isolation</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">One worktree/branch per agent</span>
+          <div class="d">Each agent works in its own git worktree so none overwrite others.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Review diff before merge</span>
+          <div class="d">Review exactly what an agent changed before it is merged.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Parallel orchestration</p>
+      <h2>Concurrency limits</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Per-account concurrency cap</span>
+          <div class="d">Configurable low-default cap on simultaneous sessions per account.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Worker engineering: Role &amp; Soul</p>
+      <h2>Roles</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Define roles</span>
+          <div class="d">Roles with responsibilities, permissions, workflow position, and definition of done.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Starter role templates</span>
+          <div class="d">A working team of well-engineered role templates out of the box.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Worker engineering: Role &amp; Soul</p>
+      <h2>Souls</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Give a worker a soul</span>
+          <div class="d">Personality, values, taste, quality bar, and style for consistent, recognizable work.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Souls as versionable files</span>
+          <div class="d">Read, edit, version-control, and share souls as portable, non-locked assets.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Worker engineering: Role &amp; Soul</p>
+      <h2>Harness compilation</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Compile harness to CLI files</span>
+          <div class="d">Compile role + soul + conventions + briefing into each CLI's native instruction files.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Preview harness material</span>
+          <div class="d">Preview exactly what harness a worker receives before its session starts.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Worker engineering: Role &amp; Soul</p>
+      <h2>Worker memory &amp; growth</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Persistent worker memory</span>
+          <div class="d">Keep lessons learned so the same feedback never has to be given twice.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Worker track record</span>
+          <div class="d">Record and show tasks completed, rework rate, and review pass rate.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Best-worker matching</p>
+      <h2>Task profiling</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Tag tasks by type and skill</span>
+          <div class="d">Auto-suggested, editable task tags so matching has real signal to match on.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Best-worker matching</p>
+      <h2>Suitability matching</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Assign the best-suited worker</span>
+          <div class="d">Score model strengths, role fit, and track record to route by quality.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Explain why a worker was chosen</span>
+          <div class="d">Show the scoring breakdown behind each assignment to trust and tune it.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Override and learn from it</span>
+          <div class="d">Override any assignment and feed the override back into future matching.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Best-worker matching</p>
+      <h2>Matching policy</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Switch matching policy</span>
+          <div class="d">Choose best-suited, fixed provider priority, quota-first, or manual.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Multi-account &amp; capacity</p>
+      <h2>Account profiles</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Register multiple accounts</span>
+          <div class="d">Named accounts per provider with isolated CLI config directories.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">See sign-in status</span>
+          <div class="d">One place to catch an expired login before it fails a task mid-sprint.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Secrets in SecretStorage</span>
+          <div class="d">Keep sensitive profile data in VSCode SecretStorage, never in settings.json.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Multi-account &amp; capacity</p>
+      <h2>Quota tracking</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Passive quota tracking</span>
+          <div class="d">Read remaining headroom per account from the CLIs' own session logs, no extra calls.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Status-bar headroom meter</span>
+          <div class="d">See remaining capacity per account at a glance.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Near-limit warning</span>
+          <div class="d">Warn before an account is cut off mid-task.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">The Scrum loop</p>
+      <h2>Backlog &amp; sprint planning</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">PM worker drafts backlog</span>
+          <div class="d">A PM-role worker drafts and refines backlog items, with your approval.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Capacity-aware planning</span>
+          <div class="d">Sprint planning considers remaining quota so commitments match what subscriptions deliver.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">The Scrum loop</p>
+      <h2>Kanban board</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Kanban board</span>
+          <div class="d">Backlog / in progress / review / done with the worker on each task, run from the IDE.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">The Scrum loop</p>
+      <h2>Review gates</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Enforced review gate</span>
+          <div class="d">A dev worker's diff must be reviewed by a QA/PO worker or you before it proceeds.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Rework loop on rejection</span>
+          <div class="d">Rejected reviews return to the same worker with the reviewer's feedback attached.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">The Scrum loop</p>
+      <h2>Standups</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Standup digest</span>
+          <div class="d">On-demand done / doing / blocked digest across all workers since the last summary.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">The Scrum loop</p>
+      <h2>Retrospectives</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Retro writes soul lessons</span>
+          <div class="d">Retro turns what went wrong into lessons written into the responsible workers' souls.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Retro triggers replanning</span>
+          <div class="d">Retro outcomes replan the remaining backlog so the team course-corrects.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Trust &amp; ToS posture</p>
+      <h2>Trust &amp; ToS posture</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Human-plausible cadence</span>
+          <div class="d">Keep session concurrency and input cadence within a human power user's range.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">Per-provider kill-switch</span>
+          <div class="d">Instantly disable one provider leg if its policy changes.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <span class="t">No hidden traffic</span>
+          <div class="d">Everything Skynet sends to an agent is visible in the terminal.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Quality &amp; distribution</p>
+      <h2>CI hardening</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">CI integration-test leg</span>
+          <div class="d">xvfb integration leg for test:integration, already a TODO in ci.yml.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Quality &amp; distribution</p>
+      <h2>Adapter contract tests</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Adapter contract tests</span>
+          <div class="d">Tests runnable against live CLIs to catch upstream breaking changes early.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Quality &amp; distribution</p>
+      <h2>Harness evaluation suite</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Harness evaluation suite</span>
+          <div class="d">Replayable benchmark tasks to measure whether a role/soul/harness change improves output.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Quality &amp; distribution</p>
+      <h2>Marketplace release</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <span class="t">Marketplace release</span>
+          <div class="d">vsce packaging, README + demo, CHANGELOG discipline; telemetry only if opt-in.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><p class="empty-note hide" id="emptyNote">No items match this status.</p></div>
+
+  <footer>
+    <div class="wrap">Skynet roadmap · generated from <code>roadmap.json</code> · see <code>ROADMAP.md</code> for vision &amp; risk gates.</div>
+  </footer>
+
+<script>
+  const chips = document.querySelectorAll('.chip');
+  const items = document.querySelectorAll('.item');
+  const sections = document.querySelectorAll('[data-section]');
+  const emptyNote = document.getElementById('emptyNote');
+
+  function apply(status){
+    items.forEach(i => i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status));
+    let anyVisible = false;
+    sections.forEach(s => {
+      const visible = s.querySelectorAll('.item:not(.hide)').length > 0;
+      s.classList.toggle('hide', !visible);
+      if (visible) anyVisible = true;
+    });
+    emptyNote.classList.toggle('hide', anyVisible);
+  }
+
+  chips.forEach(chip => chip.addEventListener('click', () => {
+    chips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    apply(chip.dataset.status);
+  }));
+</script>
+</body>
+</html>
