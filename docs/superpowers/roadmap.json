@@ -24,6 +24,18 @@
     "completed": null
   },
   {
+    "slug": "codex-adapter--interactive-mode",
+    "epic": "Single agent session",
+    "feature": "Codex CLI adapter",
+    "title": "Multi-turn interactive terminal mode",
+    "description": "Drive codex as a live TUI in a VSCode terminal: multi-turn steering with pause/resume in one session, via a file mailbox.",
+    "status": "open",
+    "spec": "docs/superpowers/specs/2026-07-04-interactive-codex-design.md",
+    "plan": null,
+    "created": "2026-07-04",
+    "completed": null
+  },
+  {
     "slug": "session-lifecycle--coarse-status",
     "epic": "Single agent session",
     "feature": "Session lifecycle",

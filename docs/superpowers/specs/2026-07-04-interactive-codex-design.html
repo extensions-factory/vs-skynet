@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Codex Adapter — Design (2026-07-04)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Codex Adapter <span class="mut">— Design (canonical frame)</span></h1>
+  <p class="sub">Adapters · a second run mode that drives <code>codex</code> as a live interactive TUI in a VSCode terminal.</p>
+  <div class="tags">
+    <span class="tag">2026-07-04</span>
+    <span class="tag">codex (Rust/ratatui TUI)</span>
+    <span class="tag">ported from 6/ (2026-06-30)</span>
+    <span class="tag">probe evidence: 2026-07-01 · codex-cli 0.142.4</span>
+  </div>
+
+  <div class="note">
+    <b>Status.</b> Ported into <code>active/</code> from the prior worktree (<code>6/</code>) spec dated
+    2026-06-30. Architecture unchanged; deltas are active-specific (prerequisite base layer, active toolchain,
+    cross-links dropped). Probe evidence retained as-is — no fresh re-probe for this port.
+  </div>
+
+  <h2>Goal</h2>
+  <p>A <b>second run mode</b> for the codex adapter that drives <code>codex</code> as a <b>live interactive
+     TUI session inside a VSCode terminal</b>, instead of the one-shot <code>codex exec --json</code> path.
+     The orchestrator pastes prompts <i>into</i> the terminal and reads results <i>out</i> of files the agent
+     writes. This buys <b>multi-turn steering (paused/resumed turns toward one task completion) + pause/resume
+     in one session</b> and a human-like execution surface, while keeping parsing robust.</p>
+  <div class="note good">
+    <b>Canonical frame.</b> This is the frame for interactive mode across all three CLIs. The claude and agy
+    interactive skeletons are <b>not yet ported to <code>active/</code></b>; only codex is in scope here.
+  </div>
+  <div class="note">
+    <b>Add alongside, do not replace.</b> Interactive mode is a new sibling of the one-shot <code>runCodex</code>
+    (<code>codex exec --json</code>, the base codex adapter — see <i>Depends on</i>). It adds a run mode; it does
+    not replace the one-shot path.
+  </div>
+
+  <h2>Depends on (prerequisite)</h2>
+  <p><code>active/</code> is currently a bare scaffold (only <code>src/extension.ts</code>); the base adapter layer
+     this spec builds on <b>does not exist yet</b> and must land first as its own upstream US:</p>
+  <ul>
+    <li><b>Shared adapter types</b> — <code>src/adapters/types.ts</code>: <code>ErrorClass</code>,
+        <code>WorkerEvent</code>, <code>WorkerUsage</code>
+        (<code>{ inputTokens, outputTokens, cachedInputTokens?, cacheWriteTokens?, reasoningTokens?, costUsd? }</code>),
+        <code>WorkerResult</code>, <code>RunOpts</code>, <code>WorkerRun</code>, <code>AgentAdapter</code>.</li>
+    <li><b>Error classifier</b> — <code>src/adapters/classify.ts</code>: pure
+        <code>classifyError(text): ErrorClass</code>.</li>
+    <li><b>One-shot codex adapter</b> — <code>src/adapters/codex/codex-adapter.ts</code>: <code>runCodex</code> /
+        <code>codexAdapter.run</code> (<code>codex exec --json</code>). Interactive mode extends this same adapter
+        with <code>runInteractive()</code>.</li>
+  </ul>
+  <div class="note warn">
+    Hard prerequisite, not soft: without the base layer, interactive mode does not compile. This spec references
+    those symbols as given and does not re-specify them (that is the base codex adapter US, source
+    <code>6/…/2026-06-29-codex-adapter-design.md</code>, not yet ported).
+  </div>
+
+  <h2>Why this shape (recorded decisions)</h2>
+  <ul>
+    <li><b>Ban risk is precautionary only</b> (no observed bans). So we build <b>no anti-ban machinery</b>; the
+        human-like surface is a cheap by-product of running interactively in a real terminal.</li>
+    <li><b>Control is the real win:</b> multi-turn, pause/resume, live human takeover.</li>
+    <li><b>Public VSCode API cannot read a full-screen TUI's output.</b> Shell Integration only segments normal
+        command/output pairs; a TUI is one endless execution. <code>onDidWriteTerminalData</code> is permanently
+        proposed (needs <code>--enable-proposed-api</code>, unusable on Marketplace); there is no screen-buffer API.
+        → <b>Output flows through files, never screen scraping.</b></li>
+    <li><b>No <code>node-pty</code>.</b> Native ABI must match VSCode's Electron, officially unsupported, breaks on
+        VSCode updates. → Use VSCode's own <code>createTerminal</code>.</li>
+    <li><b>Session metadata is read from the CLI's own rollout file, not the screen</b> — accurate usage/session-id
+        without trusting agent self-report.</li>
+  </ul>
+
+  <h2>Verified ground truth (real CLI)</h2>
+  <p><code>codex</code> (Rust/ratatui TUI). Sources: developers.openai.com/codex, github.com/openai/codex, and the
+     prior worktree's <code>terminal-probe.test.ts</code> (<code>TERMINAL_PROBE=1</code>, run 2026-07-01 against a
+     real <code>codex-cli 0.142.4</code> install — mailbox pause/resume/done cycle, submit key, and
+     <code>/status</code> all passed). This port <b>trusts that evidence</b> rather than re-probing.</p>
+  <h3>Launch interactive</h3>
+  <pre>codex -C &lt;cwd&gt; -m &lt;model&gt; -s workspace-write -a never
+  -c disable_paste_burst=true
+  -c 'tui.keymap.composer.submit="tab"'
+  -c 'tui.keymap.composer.queue="ctrl-q"'</pre>
+  <div class="note good">
+    <b>VERIFIED</b> (prior worktree) — the probe launches with this exact <code>-a never</code> argv and completes a
+    two-turn pause/resume/done cycle with no stuck approval prompt. <code>-a never</code> is confirmed
+    <i>auto-approve within sandbox</i>, not <i>deny everything</i>; the <code>--yolo</code> fallback is not needed.
+    Flags are global (shared by <code>codex</code>, <code>exec</code>, <code>resume</code>).
+  </div>
+  <h3>Session rollout file</h3>
+  <p><code>$CODEX_HOME/sessions/YYYY/MM/DD/rollout-&lt;ts&gt;-&lt;uuid&gt;.jsonl</code> (default <code>~/.codex</code>).
+     JSONL of <code>RolloutLine</code> envelopes <code>{ "type", "payload" }</code>, <b>written incrementally</b>:</p>
+  <ul>
+    <li><code>session_meta</code> → conversation/session <b>id</b>, cwd, cli version, git info.</li>
+    <li><code>event_msg</code> with <code>payload.type === "token_count"</code> → <b>cumulative</b> usage in
+        <code>payload.info.total_token_usage</code> (<code>input_tokens</code>, <code>cached_input_tokens</code>,
+        <code>output_tokens</code>, <code>reasoning_output_tokens</code>, <code>total_tokens</code>);
+        <code>last_token_usage</code> for the last turn; <code>model_context_window</code>; and
+        <code>payload.rate_limits</code> with 5h/weekly usage. Per-turn = current cumulative − previous.</li>
+  </ul>
+  <h3>Resume &amp; isolation</h3>
+  <ul>
+    <li><b>Resume:</b> <code>codex resume &lt;id&gt;</code> / <code>--last</code> / <code>/resume</code> in-TUI. The id
+        is the rollout UUID. Native resume is our <b>crash-recovery fallback</b>.</li>
+    <li><b><code>CODEX_HOME</code></b> relocates the whole home (config + <code>sessions/</code>), so per-account
+        isolation (via <code>opts.configDir</code>) moves the rollout files too.</li>
+    <li><b><code>/status</code></b> prints session id, model, cwd, permissions, account, and limits; the
+        <code>Session:</code> value matches <code>session_meta.id</code>. Diagnostic only — production harvest reads
+        rollout JSONL.</li>
+  </ul>
+  <h3>Submit key</h3>
+  <p>VSCode terminal injection is paste-like to Codex; plain Enter (<code>\r</code>) and kitty Enter
+     (<code>[13u</code>) both land as newlines in the composer. The verified automation path launches Codex with
+     process-local config overrides (<code>disable_paste_burst=true</code>,
+     <code>composer.submit="tab"</code>, <code>composer.queue="ctrl-q"</code>) and submits with
+     <code>sendSequence("\t")</code>.</p>
+
+  <h2>Architecture (canonical — shared by all three CLIs)</h2>
+  <p>CLI-agnostic core in <code>src/adapters/interactive/</code>; each CLI supplies a <b>profile</b>.</p>
+  <pre>ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible)
+─────────────────────────────             ─────────────────────────────────────
+1. write inbox/turn-N.md  ───────┐
+2. sendText("Read inbox/turn-N.md└──────►  agent at prompt receives the ping
+   and follow it", false)              agent reads inbox file (its own tools)
+   + sendSequence(submitSequence)      agent works…  ◄── user may watch / take over
+3. poll outbox/turn-N.json  ◄──────────── agent writes outbox/turn-N.json on stop
+4. read+parse outbox → TurnResult
+5. SessionHarvester reads newest    ◄──── codex appends rollout-*.jsonl itself
+   rollout-*.jsonl → sessionId+usage
+6. decide next turn:
+   · pause  = withhold next ping
+   · resume = write inbox/turn-(N+1) + ping
+──────────────────────── SAD PATH ────────────────────────
+· timeout: no outbox within T  → status 'timeout'
+· poll process group / recursive descendants: no codex → status 'crashed'
+· onDidCloseTerminal / exitStatus → terminal died</pre>
+
+  <h3>Components</h3>
+  <ol>
+    <li><b><code>TerminalSession</code></b> — wraps <code>vscode.window.createTerminal({ name, cwd, env })</code>
+        running the launch argv. Captures shell PID via <code>terminal.processId</code>. Owns disposal +
+        <code>onDidCloseTerminal</code>.</li>
+    <li><b><code>Mailbox</code></b> — per-run dir <code>&lt;cwd&gt;/.skynet/&lt;workerId&gt;/{inbox,outbox}/</code>.
+        Writes <code>inbox/turn-N.md</code>; resolves the turn by <b>polling</b> <code>outbox/turn-N.json</code> (no
+        <code>FileSystemWatcher</code>). Ensures <code>.skynet/</code> is gitignored. The poll (~500ms, same timeout
+        as the turn) is the only detection mechanism and doubles as the parse-error retry: on <code>ENOENT</code> or
+        a JSON parse error it keeps polling until valid or timeout.</li>
+    <li><b><code>Doorbell</code></b> — <code>terminal.show(false)</code> → <code>sendText(pingLine, false)</code> →
+        <code>sendSequence(profile.submitSequence)</code>. The ping is tiny
+        (<code>Read .skynet/&lt;id&gt;/inbox/turn-N.md and follow it.</code>) so it dodges large-paste corruption.</li>
+    <li><b>Protocol bootstrap</b> — the target <code>cwd</code> often has its own real
+        <code>profile.instructionFile</code> (e.g. <code>AGENTS.md</code>). <b>Never overwrite it.</b> Append the
+        mailbox protocol wrapped in <code>&lt;!-- skynet-interactive:BEGIN --&gt;</code> /
+        <code>END</code> markers; <code>dispose()</code> strips the block back out. Idempotent.</li>
+    <li><b><code>SessionHarvester</code></b> — locates the newest <code>rollout-*.jsonl</code> under
+        <code>profile.sessionDir(configDir)</code>, parses <code>session_meta</code> + latest <code>token_count</code>
+        into <code>{ sessionId, usage, rateLimits? }</code>. Read on each turn and at dispose.</li>
+    <li><b>Optional <code>SessionInfoProbe</code></b> — for CLIs without a useful transcript, asks the agent to write
+        <code>outbox/session-info.json</code>. <b>N/A for codex</b> (rollout JSONL is authoritative).</li>
+    <li><b><code>InteractiveSession</code></b> (orchestrator) — the state machine driving turns.</li>
+  </ol>
+
+  <h3>Per-CLI profile (the seam the skeletons fill)</h3>
+  <pre>interface InteractiveCliProfile {
+  id: "codex" | "claude" | "agy";
+  launchArgv(opts: InteractiveOpts): string[];
+  configEnv(configDir?: string): Record&lt;string, string&gt;;
+  instructionFile: string;
+  submitSequence: string;                              // Codex: "\t", submit bound to Tab
+  sessionDir(configDir?: string): string;
+  harvest(sessionFileText: string): { sessionId?: string; usage?: WorkerUsage; rateLimits?: unknown };
+  sessionInfoPrompt?(outboxPath: string): string;
+}
+
+const codexInteractive: InteractiveCliProfile = {
+  id: "codex",
+  launchArgv: (o) =&gt; ["-C", o.cwd, ...(o.model ? ["-m", o.model] : []),
+                      "-s", o.sandbox ?? "workspace-write", "-a", "never",
+                      "-c", "disable_paste_burst=true",
+                      "-c", 'tui.keymap.composer.submit="tab"',
+                      "-c", 'tui.keymap.composer.queue="ctrl-q"'],
+  configEnv: (dir) =&gt; dir ? { CODEX_HOME: dir } : {},
+  instructionFile: "AGENTS.md",
+  submitSequence: "\t",
+  sessionDir: (dir) =&gt; dir ? path.join(dir, "sessions")
+                           : path.join(os.homedir(), ".codex", "sessions"),
+  harvest: (text) =&gt; parseCodexRollout(text),
+};</pre>
+
+  <h2>Public shape</h2>
+  <pre>type TurnResult =
+  | { status: "paused";  summary: string }
+  | { status: "done";    summary: string; usage?: WorkerUsage; filesTouched?: string[] }
+  | { status: "error";   reason: string; errorClass?: ErrorClass }
+  | { status: "timeout" }
+  | { status: "crashed" };
+
+interface InteractiveSession extends AsyncIterable&lt;WorkerEvent&gt; {
+  send(prompt: string): Promise&lt;TurnResult&gt;;
+  readonly sessionId: Promise&lt;string | undefined&gt;;
+  dispose(): Promise&lt;void&gt;;
+}
+
+interface AgentAdapter {                               // base layer
+  readonly id: "codex" | "claude" | "agy";
+  run(opts: RunOpts): WorkerRun;                       // existing one-shot exec
+  runInteractive?(opts: InteractiveOpts): Promise&lt;InteractiveSession&gt;;
+}</pre>
+  <p>After a turn resolves <code>done</code>, the session is complete: further <code>send()</code> calls
+     <b>reject</b> and <code>dispose()</code> is the only valid next call. The terminal stays open for inspection /
+     human takeover until <code>dispose()</code>. <code>TurnResult</code> maps to <code>WorkerResult</code> only at
+     the adapter boundary: <code>done→success</code>, <code>error→failed</code>,
+     <code>timeout→failed(transport)</code>, <code>crashed→failed(terminal)</code>. <code>paused</code> keeps the
+     session open.</p>
+  <div class="note">
+    <b>Enrichment note (ordering contract).</b> The <code>started</code> event carries <code>sessionId</code>, but
+    that id comes from the <b>asynchronous rollout harvest</b>, not synchronously at launch. <code>started</code> is
+    emitted once the first harvest yields a <code>sessionId</code> (or empty if harvest hasn't resolved by the first
+    turn's completion — the readonly <code>sessionId</code> promise is authoritative). Consumers must not assume
+    <code>started</code> precedes the first <code>send()</code>; the iterator is passive.
+  </div>
+
+  <h2>Protocol contract (taught via the instruction file)</h2>
+  <div class="note">
+    For each <code>inbox/turn-N.md</code>: do the work, then <b>write <code>outbox/turn-N.json</code> before you
+    stop</b>, matching the same <code>N</code> —
+    <code>{"status":"paused","summary":"…"}</code> ·
+    <code>{"status":"done","summary":"…","filesTouched":["…"]}</code> ·
+    <code>{"status":"error","reason":"…"}</code>. Never delete inbox files. Write the outbox in a single operation
+    (tmp + rename) as the last action of the turn. The mailbox retry stays mandatory because the agent may ignore
+    this.
+  </div>
+  <p>The outbox <b>existence</b> is the turn boundary; its <code>status</code> decides the next move. For Codex,
+     usage/session-id never come from the agent — they come from the rollout harvest.</p>
+
+  <h2>Readiness handshake &amp; sad path</h2>
+  <ul>
+    <li><b>Readiness:</b> turn-1's ping is the readiness probe. No <code>outbox/turn-1.json</code> within
+        <code>readyTimeoutMs</code> (30s) → re-send the ping once before failing. A ~1.5s pre-ping delay reduces the
+        sendText startup race.</li>
+    <li><b>Turn timeout</b> (<code>turnTimeoutMs</code>, 5 min): no outbox → <code>timeout</code>.</li>
+    <li><b>Crash:</b> poll the terminal process group / recursively walk descendants of
+        <code>terminal.processId</code> (macOS/Linux, ~3s); no <code>codex</code> descendant while the turn is open →
+        <code>crashed</code>. Best-effort; terminal close and turn timeout are the hard signals.</li>
+    <li><b>Terminal death:</b> <code>onDidCloseTerminal</code> / <code>exitStatus</code> → <code>crashed</code>.</li>
+    <li>On <code>timeout</code>/<code>crashed</code>, recovery via <code>codex resume</code> is <b>out of scope for
+        v1</b> — we surface the status; recovery is a later US.</li>
+  </ul>
+
+  <h2>Error classification</h2>
+  <p>Reuse the base-layer pure <code>classifyError(text)</code> (<code>limit</code>/<code>transport</code>/<code>terminal</code>).
+     Inputs: the agent-written <code>error.reason</code> plus any stderr from terminal close. A real 429 mid-TUI may
+     kill the session before <code>error.json</code> is written; then we report <code>crashed</code>, and a later
+     fallback US classifies from the rollout/last-known state.</p>
+
+  <h2>Toolchain (active)</h2>
+  <p>Reconciled with <code>active/</code>'s <code>CONSTITUTION.md</code> and real config — replaces the prior
+     worktree's npm/mocha conventions:</p>
+  <ul>
+    <li><b>pnpm only.</b> <code>pnpm run test:unit</code>, <code>pnpm run test:integration</code>,
+        <code>pnpm test</code>, <code>pnpm run lint</code> (<code>biome check .</code>).</li>
+    <li><b>Unit tests (vitest):</b> colocated as <code>src/adapters/interactive/&lt;module&gt;.test.ts</code>.
+        <code>vitest.config.ts</code> includes <code>src/**/*.test.ts</code> and <b>excludes
+        <code>src/test/**</code></b>, so unit tests must not live under <code>src/test/</code>. vitest aliases
+        <code>vscode</code> → <code>src/test-utils/vscode-mock.ts</code>, so pure and fake-transport tests run
+        headless.</li>
+    <li><b>Integration tests (<code>@vscode/test-cli</code>):</b> under <code>src/test/**</code> (excluded from
+        vitest), run inside a real VSCode instance. The real <code>vscode.Terminal</code> transport test and the
+        opt-in real-CLI e2e go here.</li>
+    <li><b>Biome</b> only (no ESLint/Prettier). TypeScript strict, kebab-case filenames.</li>
+    <li><b>Real-CLI e2e gate:</b> env flag (e.g. <code>CODEX_INTERACTIVE_E2E</code>) so <code>pnpm test</code> does
+        not burn quota by default.</li>
+  </ul>
+
+  <h2>Proof of function (acceptance gate)</h2>
+  <p>Abstract the terminal + clock behind a <code>TerminalTransport</code> interface so the core is testable without
+     a real CLI. Runner called out per test.</p>
+  <table>
+    <tr><th>Test</th><th>Runner</th><th>Asserts</th></tr>
+    <tr><td>turn cycle</td><td>vitest unit, fake transport</td><td><code>paused</code> / <code>done</code> (usage from fake rollout) / <code>error</code> TurnResults</td></tr>
+    <tr><td>timeout</td><td>vitest unit</td><td>no outbox → <code>timeout</code> after <code>turnTimeoutMs</code></td></tr>
+    <tr><td>partial outbox</td><td>vitest unit</td><td>invalid then valid JSON → resolves on the valid content</td></tr>
+    <tr><td>crash</td><td>vitest unit</td><td>no child PID → <code>crashed</code></td></tr>
+    <tr><td>rollout parser</td><td>vitest unit, pure</td><td><code>parseCodexRollout</code> extracts sessionId + usage + rate_limits from a real captured JSONL</td></tr>
+    <tr><td>doorbell</td><td>vitest unit, pure</td><td>exact <code>sendText(ping,false)</code> + <code>sendSequence("\t")</code> calls</td></tr>
+    <tr><td>terminal transport</td><td>@vscode/test-cli</td><td>real <code>vscode.Terminal</code> resolves a processId + disposes</td></tr>
+    <tr><td>submit-key gate</td><td>manual (DONE, prior worktree)</td><td>probe proves <code>sendSequence("\t")</code> submits in a real integrated terminal</td></tr>
+    <tr><td>slash-status</td><td>manual (DONE, prior worktree)</td><td><code>/status</code> raw text contains session/model/sandbox/account hints</td></tr>
+    <tr><td>integration</td><td>@vscode/test-cli, real codex, env-gated</td><td><code>startInteractive()</code> drives two turns → outbox TurnResults + harvested usage from the real rollout; human can still type</td></tr>
+  </table>
+
+  <h2>Out of scope (v1)</h2>
+  <ul>
+    <li>Base codex adapter (shared types + <code>classifyError</code> + one-shot <code>runCodex</code>) — a
+        <b>prerequisite</b> US (see <i>Depends on</i>).</li>
+    <li>Multi-worker fleet / scheduler (only <code>workerId</code> path naming is reserved).</li>
+    <li>claude / agy interactive (same frame, different profile; not yet ported).</li>
+    <li>Automated crash/timeout recovery via <code>codex resume</code> (later US).</li>
+    <li>Windows child-PID polling.</li>
+    <li>Webview panel rework for the sparse event stream (smoke log only).</li>
+    <li>Replacing <code>codex exec --json</code> (it stays for one-shot tasks).</li>
+  </ul>
+
+  <footer>
+    Skynet · Adapters epic · interactive codex mode · ported 2026-07-04 · source of truth is the
+    <code>.md</code> beside this file.
+  </footer>
+
+</div>
+</body>
+</html>
