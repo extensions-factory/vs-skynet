@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Codex Adapter — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:22px;margin:38px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:17px;margin:26px 0 6px;color:var(--acc)}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .files{font-size:13px;color:var(--mut);margin:4px 0 8px}
+  .files b{color:var(--tx)}
+  ul.steps{list-style:none;padding-left:0;margin:8px 0}
+  ul.steps li{margin:5px 0;padding-left:26px;position:relative}
+  ul.steps li::before{content:"☐";position:absolute;left:2px;color:var(--mut)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:12px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Codex Adapter <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">TDD, bite-sized tasks. Full code lives in the <code>.md</code> beside this file (source of truth); this is a human checklist.</p>
+  <div class="tags">
+    <span class="tag">2026-07-05</span>
+    <span class="tag">TypeScript · Node16 · CommonJS</span>
+    <span class="tag">vitest + @vscode/test-cli</span>
+    <span class="tag">Biome · pnpm</span>
+  </div>
+
+  <div class="note">
+    <b>Goal.</b> Drive <code>codex</code> as a live TUI inside a VSCode terminal — multi-turn steering with
+    pause/resume in one session — via a file mailbox, proven against a real <code>codex</code> install.
+    <b>Spec:</b> <code>docs/superpowers/specs/2026-07-04-interactive-codex-design.md</code>.
+  </div>
+
+  <h2>Global constraints</h2>
+  <ul>
+    <li><b>pty/terminal only</b> — no <code>codex exec --json</code>, no provider SDK. Single-turn session = fast
+        path.</li>
+    <li>Launch argv (codex-cli 0.142.4): <code>codex -C &lt;cwd&gt; [-m &lt;model&gt;] -s &lt;sandbox&gt; -a never -c disable_paste_burst=true -c 'tui.keymap.composer.submit="tab"' -c 'tui.keymap.composer.queue="ctrl-q"'</code>; submit <code>"\t"</code>.</li>
+    <li>Timeouts: <code>turnTimeoutMs</code> 300000; <code>readyTimeoutMs</code> 30000 (<b>turn-0 only</b>, re-pings once). Real turns (N ≥ 1) never re-pinged.</li>
+    <li>Protocol via <code>.skynet/&lt;workerId&gt;/protocol.md</code> (gitignored, disposable). Project
+        <code>AGENTS.md</code> never read or written.</li>
+    <li>Crash detection <code>ps -Ao pid,ppid,comm</code> — macOS/Linux only. Mailbox reader is a ~500ms poll loop.</li>
+    <li><b>Unit</b> (vitest): colocated <code>src/adapters/**/&lt;m&gt;.test.ts</code>, <code>describe/test/expect</code>. <b>Integration</b> (mocha): <code>src/test/**</code>, <code>suite/test</code> + <code>node:assert</code>, real vscode.</li>
+    <li>Relative imports omit <code>.js</code>. Real-CLI e2e gated behind <code>CODEX_INTERACTIVE_E2E</code>.</li>
+  </ul>
+
+  <h2>US-0 · Shared adapter foundation (prerequisite)</h2>
+  <p class="mut">Minimal types + classifier the interactive core imports. No headless <code>run()</code>/<code>RunOpts</code>/<code>WorkerRun</code> (pty-only).</p>
+  <div class="card">
+    <h3>Task 0.1 · Shared types + error classifier</h3>
+    <p class="files"><b>Create:</b> <code>src/adapters/types.ts</code>, <code>src/adapters/classify.ts</code> · <b>Test:</b> <code>src/adapters/classify.test.ts</code></p>
+    <p>Produces <code>ErrorClass</code>, <code>WorkerEvent</code>, <code>WorkerUsage</code>, <code>WorkerResult</code>, and pure <code>classifyError(text): ErrorClass</code> (limit/transport/terminal).</p>
+    <ul class="steps">
+      <li>Create <code>types.ts</code> (pure declarations)</li>
+      <li>Write failing <code>classify.test.ts</code> (limit / transport / terminal)</li>
+      <li>Run to fail → implement <code>classify.ts</code> → run to pass</li>
+      <li>Commit</li>
+    </ul>
+  </div>
+
+  <h2>US-1 · Interactive Codex Mode</h2>
+  <p class="mut">End-to-end vertical slice: <code>codexAdapter.runInteractive()</code> returns a ready session, <code>send()</code> drives turns, usage/sessionId harvested from the rollout, clean <code>dispose()</code>.</p>
+
+  <div class="card">
+    <h3>Task 1 · Interactive types + shell quoting</h3>
+    <p class="files"><b>Create:</b> <code>interactive/types.ts</code>, <code>interactive/shell.ts</code> · <b>Test:</b> <code>interactive/shell.test.ts</code></p>
+    <p>Defines <code>InteractiveOpts</code>, <code>TurnResult</code>, <code>InteractiveSession</code>, <code>HarvestResult</code>, <code>InteractiveCliProfile</code> (no <code>instructionFile</code>), <code>TerminalTransport</code>, <code>TerminalFactory</code>; <code>shellQuote</code> / <code>buildLaunchCommand</code>.</p>
+    <ul class="steps"><li>Create types</li><li>Failing shell test</li><li>Fail → implement → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 2 · Mailbox (inbox/outbox + protocol.md + gitignore)</h3>
+    <p class="files"><b>Create:</b> <code>interactive/fs-helpers.ts</code>, <code>interactive/mailbox.ts</code> · <b>Test:</b> <code>interactive/mailbox.test.ts</code></p>
+    <p><code>Mailbox</code> with <code>writeProtocol</code>, <code>writeInbox</code>, <code>tryReadOutbox</code> (single non-blocking attempt; poll lives in Task 8), <code>ensureGitignored</code>, <code>dispose</code>. <code>readFileIfExists</code> helper.</p>
+    <ul class="steps"><li>Failing mailbox test (writeInbox / writeProtocol / half-written outbox / gitignore / dispose)</li><li>Fail → implement <code>fs-helpers</code> + <code>mailbox</code> → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 3 · Fake transport test double + Doorbell</h3>
+    <p class="files"><b>Create:</b> <code>interactive/test-helpers/fake-terminal-transport.ts</code>, <code>interactive/doorbell.ts</code> · <b>Test:</b> <code>interactive/doorbell.test.ts</code></p>
+    <p><code>FakeTerminalTransport</code> (records calls, <code>simulateClose</code>); <code>ring()</code> = show → sendText(ping) → sendSequence(submit), in order.</p>
+    <ul class="steps"><li>Write fake + failing doorbell test</li><li>Fail → implement <code>ring</code> → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 4 · Crash detection (process-descendant walk)</h3>
+    <p class="files"><b>Create:</b> <code>interactive/process-watch.ts</code> · <b>Test:</b> <code>interactive/process-watch.test.ts</code></p>
+    <p><code>hasLiveDescendant(pid, matchName)</code> via <code>ps -Ao pid,ppid,comm</code> (macOS/Linux). Test spawns/kills a real <code>sleep</code>.</p>
+    <ul class="steps"><li>Failing test</li><li>Fail → implement → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 5 · Codex rollout parser + profile</h3>
+    <p class="files"><b>Create:</b> <code>codex/interactive-profile.ts</code> · <b>Test:</b> <code>codex/interactive-profile.test.ts</code></p>
+    <p><code>parseCodexRollout(text)</code> (sessionId + cumulative usage + rate_limits from real captured JSONL) and the <code>codexInteractive</code> profile object (launchArgv, configEnv, submitSequence, sessionDir, harvest).</p>
+    <ul class="steps"><li>Failing parser + profile test (real fixture)</li><li>Fail → implement → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 6 · Session harvester</h3>
+    <p class="files"><b>Create:</b> <code>interactive/session-harvester.ts</code> · <b>Test:</b> <code>interactive/session-harvester.test.ts</code></p>
+    <p><code>harvestSession(profile, configDir)</code> — recursive newest-file finder over <code>sessions/YYYY/MM/DD/rollout-*.jsonl</code>, then <code>profile.harvest(text)</code>.</p>
+    <ul class="steps"><li>Failing test (missing dir → {}; newest across nesting)</li><li>Fail → implement → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 7 · VscodeTerminalTransport (real terminal)</h3>
+    <p class="files"><b>Create:</b> <code>interactive/vscode-terminal-transport.ts</code> · <b>Test (integration):</b> <code>src/test/interactive-vscode-terminal-transport.test.ts</code></p>
+    <p>Only interactive-core file touching <code>vscode</code>. Test creates a real terminal, resolves a processId, disposes — under <code>@vscode/test-cli</code>.</p>
+    <ul class="steps"><li>Failing integration test</li><li>Fail → implement → pass (<code>pnpm run test:integration</code>)</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 8 · InteractiveSession + startInteractive (readiness turn-0)</h3>
+    <p class="files"><b>Create:</b> <code>interactive/interactive-session.ts</code> · <b>Test:</b> <code>interactive/interactive-session.test.ts</code></p>
+    <p>Writes <code>protocol.md</code>, launches the terminal, runs a synthetic idempotent <b>turn-0 readiness</b> (re-ping once on <code>readyTimeoutMs</code>), then serves real turns with <b>no re-ping</b> (guard: <code>turnTimeoutMs</code>). Harvests sessionId/usage; passive event iterator. No session-info fallback (codex has none).</p>
+    <ul class="steps">
+      <li>Failing test: readiness + paused/done turns; usage/sessionId on iterator</li>
+      <li><code>send()</code> rejects after completion</li>
+      <li>slow real turn is <b>not</b> re-pinged (exactly one ping)</li>
+      <li>readiness fails + disposes when turn-0 never arrives</li>
+      <li>timeout on missing outbox; crashed on dead descendant</li>
+      <li>protocol.md written; <code>AGENTS.md</code> never touched; gone after dispose</li>
+      <li>Fail → implement → pass · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 9 · Codex adapter wiring + real-CLI e2e</h3>
+    <p class="files"><b>Create:</b> <code>codex/codex-adapter.ts</code> · <b>Modify:</b> <code>src/adapters/types.ts</code> (add <code>AgentAdapter</code>) · <b>Test:</b> <code>codex/codex-adapter.test.ts</code> (unit), <code>src/test/interactive-codex.e2e.test.ts</code> (integration, env-gated)</p>
+    <p><code>codexAdapter.runInteractive()</code> delegates to <code>startInteractive(codexInteractive, opts)</code>. E2e (opt-in) drives readiness + two real turns against a real codex and harvests a session id.</p>
+    <ul class="steps">
+      <li>Add <code>AgentAdapter</code> (import at top, interface at end — type-only cycle)</li>
+      <li>Failing wiring unit test (mock startInteractive) → implement → pass</li>
+      <li>Write env-gated e2e (<code>CODEX_INTERACTIVE_E2E=1</code>)</li>
+      <li><code>pnpm test</code> green (e2e skipped) · Commit</li>
+    </ul>
+  </div>
+
+  <h2>Final verification</h2>
+  <ul class="steps">
+    <li><code>pnpm test</code> — unit + integration green, e2e skipped</li>
+    <li><code>pnpm run lint</code> — clean</li>
+    <li><code>.skynet/</code> gitignored; no mailbox artifacts staged</li>
+  </ul>
+
+  <footer>Skynet · Adapters epic · interactive codex mode · plan 2026-07-05 · full code in the <code>.md</code></footer>
+
+</div>
+</body>
+</html>
