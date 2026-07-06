@@ -44,6 +44,7 @@
     <span class="tag">2026-07-06</span>
     <span class="tag">US1.2.1 coarse status</span>
     <span class="tag">US1.2.2 awaiting-input notify</span>
+    <span class="tag">refine pass 1 applied</span>
   </div>
 
   <h2>Goal</h2>
@@ -78,13 +79,13 @@
      home for the on-change hook and terminal-absorb logic).</div>
 
   <h3>Unit: <code>session-state-machine.ts</code></h3>
-<pre>export type SessionStatus =
-  | "launching" | "ready" | "busy" | "awaiting-input"
-  | "done" | "failed" | "stopped";
+<pre>// SessionStatus is defined in src/adapters/types.ts (beside WorkerEvent) and
+// imported here — see Surfacing for why. SessionEvent is machine-internal.
+import type { SessionStatus } from "../types";
 
 export type SessionEvent =
   | "readyOutbox" | "startupFailed" | "send"
-  | "paused" | "doneOutbox" | "turnFailed"
+  | "turnPaused" | "turnDone" | "turnFailed"
   | "terminalClosed" | "dispose";
 
 export class AgentSessionStateMachine {
@@ -95,7 +96,9 @@ export class AgentSessionStateMachine {
 }</pre>
   <p><code>transition(event)</code>: if <code>isTerminal</code> → <b>return</b> (absorb the done/crash race); else look
      up <code>table[state][event]</code> — if defined, set state and fire <code>onChange(prev, next)</code>; else
-     <b>throw</b> <code>illegal transition: &lt;state&gt; -/&lt;event&gt;</code>.</p>
+     <b>throw</b> <code>illegal transition: &lt;state&gt; -/&lt;event&gt;</code>.
+     <code>turnPaused</code> / <code>turnDone</code> / <code>turnFailed</code> are named in parallel — the three
+     mutually-exclusive outcomes <code>afterTurn</code> classifies.</p>
 
   <h3>Transition table</h3>
   <table>
@@ -108,8 +111,8 @@ export class AgentSessionStateMachine {
       <tr><td>ready</td><td>send</td><td>busy</td></tr>
       <tr><td>ready</td><td>dispose</td><td>stopped</td></tr>
       <tr><td>ready</td><td>terminalClosed</td><td>failed</td></tr>
-      <tr><td>busy</td><td>paused</td><td>awaiting-input</td></tr>
-      <tr><td>busy</td><td>doneOutbox</td><td>done</td></tr>
+      <tr><td>busy</td><td>turnPaused</td><td>awaiting-input</td></tr>
+      <tr><td>busy</td><td>turnDone</td><td>done</td></tr>
       <tr><td>busy</td><td>turnFailed</td><td>failed</td></tr>
       <tr><td>busy</td><td>dispose</td><td>stopped</td></tr>
       <tr><td>busy</td><td>terminalClosed</td><td>failed</td></tr>
@@ -121,34 +124,62 @@ export class AgentSessionStateMachine {
   <p><code>done</code> / <code>failed</code> / <code>stopped</code> are absorbing. <code>done</code> is terminal — a
      completed task ends the session; multi-turn continues only through <code>awaiting-input → send</code>.</p>
 
-  <h3>Surfacing</h3>
+  <h3>Surfacing (<code>src/adapters/types.ts</code>, <code>src/adapters/interactive/types.ts</code>)</h3>
   <ul>
+    <li><code>SessionStatus</code> is defined <b>in <code>src/adapters/types.ts</code></b> (beside <code>WorkerEvent</code>),
+        not in the machine file. <code>interactive/types.ts</code> already imports from <code>../types</code>, so
+        defining <code>SessionStatus</code> there and importing it <i>up</i> into <code>adapters/types.ts</code> would
+        make the two type modules circular. Defining it in the parent and importing it <i>down</i> keeps the existing
+        child→parent flow. (Declines finding S2's suggested location; keeps its concern.)</li>
     <li>New <code>WorkerEvent</code> kind: <code>{ kind: "status"; status: SessionStatus }</code>.</li>
     <li><code>InteractiveSession</code> gains <code>readonly status: SessionStatus</code> (sync → <code>machine.state</code>).</li>
-    <li>Machine built with <code>onChange: (_, to) =&gt; this.pushEvent({ kind: "status", status: to })</code> — every
-        transition auto-emits into the existing async stream.</li>
+    <li>Machine built with <code>onChange: (_, to) =&gt; this.pushEvent({ kind: "status", status: to })</code>. The
+        initial <code>launching</code> status has no transition, so it is <b>not</b> emitted as an event — readable only
+        via the getter; the first <code>status</code> event is <code>ready</code>. Because the async iterator replays
+        <code>this.buffered</code> from index 0, a consumer that starts iterating after <code>startInteractive()</code>
+        resolves still sees <code>ready</code> onward in order (B1).</li>
   </ul>
 
   <h3>Wiring: <code>InteractiveSessionImpl</code></h3>
   <table>
     <thead><tr><th>Lifecycle point</th><th>Event</th></tr></thead>
     <tbody>
-      <tr><td>construct (<code>startInteractive</code>)</td><td>initial <code>launching</code></td></tr>
+      <tr><td>construct (<code>startInteractive</code>)</td><td>initial <code>launching</code> (getter only, no event)</td></tr>
       <tr><td><code>ready()</code> success</td><td>readyOutbox</td></tr>
-      <tr><td><code>ready()</code> timeout / crashed</td><td>startupFailed</td></tr>
+      <tr><td><code>ready()</code> timeout / crashed (<b>before</b> <code>dispose()</code>)</td><td>startupFailed</td></tr>
       <tr><td><code>send()</code> entry</td><td>send</td></tr>
-      <tr><td><code>afterTurn</code>: paused</td><td>paused (after the <code>message</code> event)</td></tr>
-      <tr><td><code>afterTurn</code>: done</td><td>doneOutbox (after the <code>message</code> event)</td></tr>
-      <tr><td><code>afterTurn</code>: error/timeout/crashed</td><td>turnFailed</td></tr>
-      <tr><td><code>transport.onDidClose</code></td><td>terminalClosed</td></tr>
+      <tr><td><code>afterTurn</code>: paused</td><td>turnPaused (after the <code>message</code> event)</td></tr>
+      <tr><td><code>afterTurn</code>: done</td><td>turnDone (after the <code>message</code> event)</td></tr>
+      <tr><td><code>afterTurn</code>: any other status (error/timeout/crashed/unknown)</td><td>turnFailed</td></tr>
+      <tr><td><code>transport.onDidClose</code></td><td>terminalClosed (no-op if already terminal)</td></tr>
       <tr><td><code>dispose()</code></td><td>dispose</td></tr>
     </tbody>
   </table>
-  <p><code>send()</code>'s guard becomes <code>if (machine.isTerminal) throw</code>; <code>finish()</code> folds into
-     machine terminality; the async iterator ends when <code>machine.isTerminal</code>. The <code>terminalClosed</code>
-     transition replaces the <code>closedByTerminal</code> boolean.</p>
+  <ul>
+    <li><b>afterTurn classification (B2):</b> <code>toTurnResult</code> only ever yields <code>paused</code>,
+        <code>done</code>, or <code>error</code> (its unknown-outbox fallback returns <code>error</code>), plus the
+        <code>timeout</code>/<code>crashed</code> sentinels. <code>afterTurn</code> fires exactly one of
+        <code>turnPaused</code>/<code>turnDone</code>/<code>turnFailed</code>; anything not <code>paused</code> or
+        <code>done</code> is <code>turnFailed</code>.</li>
+    <li><b>Readiness ordering (S5):</b> <code>ready()</code> runs <code>harvestInto()</code> (may emit
+        <code>started</code> then <code>usage</code>) and <i>then</i> fires <code>readyOutbox</code> — so the order is
+        <code>started</code>, <code>usage</code>, <code>status: ready</code>.</li>
+    <li><b>Startup-failure ordering (S4):</b> fire <code>machine.transition("startupFailed")</code> <b>before</b>
+        <code>this.dispose()</code>. The machine is then terminal (<code>failed</code>), so <code>dispose()</code>'s
+        <code>dispose</code> event is absorbed and status stays <code>failed</code>.</li>
+    <li><code>send()</code>'s guard becomes <code>if (machine.isTerminal) throw</code>.</li>
+    <li><b>Iterator termination (S3):</b> <code>finish()</code> is removed; the iterator ends when
+        <code>machine.isTerminal</code>. Reaching terminal always goes through a transition whose <code>onChange</code>
+        calls <code>pushEvent</code> (which does <code>emitter.emit("event")</code>), so the terminal <code>status</code>
+        event wakes the iterator for its final check — replacing the explicit emit in today's <code>finish()</code>.
+        <code>_sessionId</code> handling (emit <code>undefined</code> if none harvested) is preserved.</li>
+    <li>The <code>terminalClosed</code> transition replaces the <code>closedByTerminal</code> boolean.</li>
+  </ul>
 
-  <h3>Edge notifier: <code>notify-awaiting-input.ts</code></h3>
+  <h3>Edge notifier: <code>src/adapters/interactive/notify-awaiting-input.ts</code></h3>
+  <p>Co-located with the interactive adapter (S1): it operates on <code>InteractiveSession</code> and imports
+     <code>vscode</code>, matching the precedent of <code>vscode-terminal-transport.ts</code> in the same directory.
+     Not at the <code>src/</code> root, which holds only the composition root (<code>extension.ts</code>).</p>
 <pre>export function notifyOnAwaitingInput(
   session: InteractiveSession,
   label: string, // worker id, for the message text
@@ -159,7 +190,7 @@ export class AgentSessionStateMachine {
      with <code>status === "awaiting-input"</code> shows <code>`${label} is waiting on you: ${lastMessage}`</code> with a
      <b>"Focus terminal"</b> action that calls <code>reveal()</code>. The worker id isn't on the session, so it's passed
      as <code>label</code>; the summary is the buffered <code>message</code> text (<code>afterTurn</code> emits
-     <code>message</code> before the <code>paused</code> transition). <code>win</code> and <code>reveal</code> are
+     <code>message</code> before the <code>turnPaused</code> transition). <code>win</code> and <code>reveal</code> are
      injected for testability and hold the only <code>vscode</code> dependency at the edge.</p>
 
   <h2>Error handling</h2>
@@ -174,14 +205,17 @@ export class AgentSessionStateMachine {
   <ul>
     <li><code>session-state-machine.test.ts</code> — pure: every legal edge, throw on a sampled illegal edge per
         non-terminal state, terminal absorption.</li>
-    <li>Extend <code>interactive-session.test.ts</code> — <code>status</code> progression + ordered <code>status</code>
-        events across a full turn (<code>launching → ready → busy → awaiting-input → busy → done</code>), plus crash and
-        startup-timeout paths → <code>failed</code>.</li>
-    <li><code>notify-awaiting-input.test.ts</code> — fake session emits <code>awaiting-input</code>; assert message shown
-        with summary and action invokes <code>reveal</code>.</li>
+    <li>Extend <code>interactive-session.test.ts</code> — getter progression
+        <code>launching → ready → busy → awaiting-input → busy → done</code>; emitted <code>status</code> events are the
+        transitions only (<code>ready, busy, awaiting-input, busy, done</code> — no <code>launching</code> event, B1);
+        crash and startup-timeout paths → <code>failed</code>. Keep "send() rejects once completed" green — it now
+        exercises the <code>machine.isTerminal</code> guard (M3).</li>
+    <li><code>notify-awaiting-input.test.ts</code> — fake session emits <code>message</code> then
+        <code>awaiting-input</code>; assert message shown with label + buffered summary and action invokes
+        <code>reveal</code>.</li>
   </ul>
 
-  <footer>Skynet · E1 F1.2 Session lifecycle · source of truth is the Markdown spec alongside this file.</footer>
+  <footer>Skynet · E1 F1.2 Session lifecycle · source of truth is the Markdown spec alongside this file · refine pass 1 applied 2026-07-06.</footer>
 </div>
 </body>
 </html>
