@@ -539,7 +539,10 @@ git commit -m "feat: stopAgentCommand hand-off handler"
 
 - [ ] **Step 1: Add the failing registration test**
 
-Append to the `describe("activate", …)` block in `src/extension.test.ts`:
+Append to the `describe("activate", …)` block in `src/extension.test.ts`. The
+count assertion locks the command surface at exactly two — it fails if the
+scaffold `skynet.helloWorld` survives or a stray command is added (reliable now
+that `beforeEach` clears call history):
 
 ```ts
 	it("registers the stop-agent command", () => {
@@ -553,6 +556,16 @@ Append to the `describe("activate", …)` block in `src/extension.test.ts`:
 			"skynet.stopAgent",
 			expect.any(Function),
 		);
+	});
+
+	it("registers exactly the two Skynet commands (no scaffold left)", () => {
+		const context = { subscriptions: [] } as unknown as Parameters<
+			typeof activate
+		>[0];
+
+		activate(context);
+
+		expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(2);
 	});
 ```
 
@@ -615,4 +628,4 @@ Run: `pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts src/ext
 Expected:
 - GIVEN any non-terminal state (`busy`/`ready`/`awaiting-input`/`launching`) → `dispose()` called once, "Agent stopped." shown (`"disposes a non-terminal session…"`, `"disposes a %s session"` ×3).
 - GIVEN no/terminal session → `dispose()` not called, "No running agent to stop." shown (`"reports nothing to stop…"`, `"does not dispose an already-terminal session"`).
-- `skynet.stopAgent` registered in the extension (`"registers the stop-agent command"`).
+- `skynet.stopAgent` registered, and exactly two commands total with no scaffold left (`"registers the stop-agent command"`, `"registers exactly the two Skynet commands…"`).
