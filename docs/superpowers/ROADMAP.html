@@ -155,6 +155,7 @@
             <li>Task profiling</li>
             <li>Suitability matching</li>
             <li>Matching policy</li>
+            <li>LLM Reasoner (advisory port)</li>
           </ul>
         </div>
         <div class="card">
@@ -438,6 +439,20 @@
         <div class="item" data-status="open">
           <span class="t">Switch matching policy</span>
           <div class="d">Choose best-suited, fixed provider priority, quota-first, or manual.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Best-worker matching</p>
+      <h2>LLM Reasoner (advisory port)</h2>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="docs/superpowers/research/2026-07-05-llm-reasoner-research.md" class="t">Score suitability with an LLM, deterministic fallback</a>
+          <div class="d">Deterministic Mediator consults an API-key LLM Reasoner (over HTTP, OpenAI-compatible adapter) for suitability scoring; later consumers: standups (US6.4.1) and retro-replan (US6.5.1/2). HTTP allowed behind the Reasoner port only; workers stay pty; never subscription auth. Research-stage, no spec yet.</div>
           <span class="badge open">Open</span>
         </div>
       </div>

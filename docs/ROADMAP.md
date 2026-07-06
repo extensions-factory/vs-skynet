@@ -210,6 +210,18 @@ the worker's behavior on the next comparable task.
   ↔ fixed provider priority ↔ quota-first ↔ manual), so that the tool
   matches how I work today, not only the ideal end state.
 
+**F4.4 — LLM Reasoner (advisory port)** — the deterministic Mediator
+consults an **API-key** LLM (over HTTP, one OpenAI-compatible adapter:
+GLM-5.2 / DeepSeek / OpenRouter / NIM / Ollama / OpenAI) for
+judgment-heavy sub-decisions — first suitability scoring (F4.2), later
+standups (F6.4) and retro-replan (F6.5). State machine, ceremony gates,
+and turn boundaries stay hardcoded; every Reasoner call has a
+deterministic fallback. HTTP is permitted **only** behind the Reasoner
+port — the `AgentProvider` (worker) port stays pty-only and the Reasoner
+never touches subscription auth. Research:
+[superpowers/research/2026-07-05-llm-reasoner-research.md](superpowers/research/2026-07-05-llm-reasoner-research.md).
+Research-stage — no spec yet.
+
 ## E5 — Multi-account & capacity
 
 > Accounts and quota are the *capacity* dimension of matching: the best

@@ -300,6 +300,18 @@
     "completed": null
   },
   {
+    "slug": "llm-reasoner--suitability-brain",
+    "epic": "Best-worker matching",
+    "feature": "LLM Reasoner (advisory port)",
+    "title": "Score suitability with an LLM, deterministic fallback",
+    "description": "Deterministic Mediator consults an API-key LLM Reasoner (over HTTP, OpenAI-compatible adapter) for suitability scoring; later consumers: standups (US6.4.1) and retro-replan (US6.5.1/2). HTTP allowed behind the Reasoner port only; workers stay pty; never subscription auth. Research-stage, no spec yet.",
+    "status": "open",
+    "spec": "docs/superpowers/research/2026-07-05-llm-reasoner-research.md",
+    "plan": null,
+    "created": "2026-07-05",
+    "completed": null
+  },
+  {
     "slug": "account-profiles--register",
     "epic": "Multi-account & capacity",
     "feature": "Account profiles",
