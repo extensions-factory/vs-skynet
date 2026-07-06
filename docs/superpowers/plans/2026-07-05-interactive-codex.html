@@ -53,6 +53,19 @@
     <b>Spec:</b> <code>docs/superpowers/specs/2026-07-04-interactive-codex-design.md</code>.
   </div>
 
+  <h2>Output — what this delivers</h2>
+  <p>After all tasks land: <code>codexAdapter.runInteractive(opts)</code> drives a real <code>codex</code> TUI in a VSCode terminal through a file mailbox — multi-turn steering with pause/resume in one live session.</p>
+  <ul>
+    <li><b><code>src/adapters/</code></b> — shared <code>types.ts</code> (worker events/usage/result, <code>AgentAdapter</code>) + pure <code>classifyError</code>.</li>
+    <li><b><code>src/adapters/interactive/</code></b> — CLI-agnostic core: mailbox, doorbell, crash-watch, session-harvester, <code>interactive-session</code> state machine, <code>config.ts</code> (<b>central</b> prompt strings + timing defaults), vscode terminal transport.</li>
+    <li><b><code>src/adapters/codex/</code></b> — codex profile (launch argv, rollout parser) + <code>codexAdapter</code>.</li>
+  </ul>
+  <p><b>One turn:</b> <code>runInteractive</code> writes <code>protocol.md</code> + turn-0 inbox, launches codex → turn-0 readiness handshake (re-ping once) → <code>send()</code> writes <code>inbox/turn-N.md</code>, rings doorbell, polls <code>outbox/turn-N.json</code> → <code>TurnResult</code> → <code>sessionId</code>/usage harvested from rollout JSONL → <code>dispose()</code> clears the mailbox + terminal.</p>
+  <div class="note" style="border-left-color:var(--yel)">
+    <b>CODEX_HOME — mandatory (multi-account isolation).</b> codex reads its account/auth from <code>CODEX_HOME</code>. Skynet runs many agents on distinct accounts, so <code>codexAdapter.runInteractive</code> <b>requires</b> <code>CODEX_HOME</code> (or <code>opts.configDir</code>) and <b>throws</b> without it. Flows to the launch env (<code>configEnv</code>) and rollout harvest (<code>sessionDir</code>). This machine: <code>CODEX_HOME=/Users/binn/.agents/codex-plus</code>.
+  </div>
+  <p class="mut"><b>Central config:</b> all prompt strings + timing defaults live in <code>src/adapters/interactive/config.ts</code>. <b>Run:</b> <code>pnpm test</code> (e2e skipped) · real e2e <code>CODEX_HOME=… CODEX_INTERACTIVE_E2E=1 pnpm run test:integration</code>.</p>
+
   <h2>Global constraints</h2>
   <ul>
     <li><b>pty/terminal only</b> — no <code>codex exec --json</code>, no provider SDK. Single-turn session = fast
@@ -70,9 +83,10 @@
   <p class="mut">Minimal types + classifier the interactive core imports. No headless <code>run()</code>/<code>RunOpts</code>/<code>WorkerRun</code> (pty-only).</p>
   <div class="card">
     <h3>Task 0.1 · Shared types + error classifier</h3>
-    <p class="files"><b>Create:</b> <code>src/adapters/types.ts</code>, <code>src/adapters/classify.ts</code> · <b>Test:</b> <code>src/adapters/classify.test.ts</code></p>
+    <p class="files"><b>Modify:</b> <code>tsconfig.json</code> · <b>Create:</b> <code>src/adapters/types.ts</code>, <code>src/adapters/classify.ts</code> · <b>Test:</b> <code>src/adapters/classify.test.ts</code></p>
     <p>Produces <code>ErrorClass</code>, <code>WorkerEvent</code>, <code>WorkerUsage</code>, <code>WorkerResult</code>, and pure <code>classifyError(text): ErrorClass</code> (limit/transport/terminal).</p>
     <ul class="steps">
+      <li>Broaden <code>tsconfig.json</code> exclude to <code>src/adapters/**/*.test.ts</code> (vitest is ESM; colocated tests break <code>tsc</code> — keep <code>src/test/**</code> compiling)</li>
       <li>Create <code>types.ts</code> (pure declarations)</li>
       <li>Write failing <code>classify.test.ts</code> (limit / transport / terminal)</li>
       <li>Run to fail → implement <code>classify.ts</code> → run to pass</li>
@@ -88,6 +102,13 @@
     <p class="files"><b>Create:</b> <code>interactive/types.ts</code>, <code>interactive/shell.ts</code> · <b>Test:</b> <code>interactive/shell.test.ts</code></p>
     <p>Defines <code>InteractiveOpts</code>, <code>TurnResult</code>, <code>InteractiveSession</code>, <code>HarvestResult</code>, <code>InteractiveCliProfile</code> (no <code>instructionFile</code>), <code>TerminalTransport</code>, <code>TerminalFactory</code>; <code>shellQuote</code> / <code>buildLaunchCommand</code>.</p>
     <ul class="steps"><li>Create types</li><li>Failing shell test</li><li>Fail → implement → pass</li><li>Commit</li></ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 1.1 · Central interactive config (prompts + timing defaults)</h3>
+    <p class="files"><b>Create:</b> <code>interactive/config.ts</code> · <b>No test</b> (pure strings/constants, covered transitively by Task 8)</p>
+    <p>The one place owning every agent-facing prompt (<code>protocolText</code>, <code>readinessInboxText</code>, <code>readinessPing</code>, <code>turnPing</code>, <code>turnInbox</code>) and every default timeout (<code>DEFAULT_*_MS</code>). Task 8 imports from here instead of inlining.</p>
+    <ul class="steps"><li>Create <code>config.ts</code></li><li>Commit</li></ul>
   </div>
 
   <div class="card">
@@ -135,7 +156,7 @@
   <div class="card">
     <h3>Task 8 · InteractiveSession + startInteractive (readiness turn-0)</h3>
     <p class="files"><b>Create:</b> <code>interactive/interactive-session.ts</code> · <b>Test:</b> <code>interactive/interactive-session.test.ts</code></p>
-    <p>Writes <code>protocol.md</code>, launches the terminal, runs a synthetic idempotent <b>turn-0 readiness</b> (re-ping once on <code>readyTimeoutMs</code>), then serves real turns with <b>no re-ping</b> (guard: <code>turnTimeoutMs</code>). Harvests sessionId/usage; passive event iterator. No session-info fallback (codex has none).</p>
+    <p>Writes <code>protocol.md</code>, launches the terminal, runs a synthetic idempotent <b>turn-0 readiness</b> (re-ping once on <code>readyTimeoutMs</code>), then serves real turns with <b>no re-ping</b> (guard: <code>turnTimeoutMs</code>). Harvests sessionId/usage; passive event iterator. Prompt strings + timeout defaults come from <code>./config</code> (Task 1.1). No session-info fallback (codex has none).</p>
     <ul class="steps">
       <li>Failing test: readiness + paused/done turns; usage/sessionId on iterator</li>
       <li><code>send()</code> rejects after completion</li>
@@ -150,11 +171,11 @@
   <div class="card">
     <h3>Task 9 · Codex adapter wiring + real-CLI e2e</h3>
     <p class="files"><b>Create:</b> <code>codex/codex-adapter.ts</code> · <b>Modify:</b> <code>src/adapters/types.ts</code> (add <code>AgentAdapter</code>) · <b>Test:</b> <code>codex/codex-adapter.test.ts</code> (unit), <code>src/test/interactive-codex.e2e.test.ts</code> (integration, env-gated)</p>
-    <p><code>codexAdapter.runInteractive()</code> delegates to <code>startInteractive(codexInteractive, opts)</code>. E2e (opt-in) drives readiness + two real turns against a real codex and harvests a session id.</p>
+    <p><code>codexAdapter.runInteractive()</code> resolves <code>configDir = opts.configDir ?? process.env.CODEX_HOME</code>, <b>throws if neither is set</b> (mandatory account isolation), then delegates to <code>startInteractive(codexInteractive, {...opts, configDir})</code>. E2e (opt-in) drives readiness + two real turns against a real codex and harvests a session id.</p>
     <ul class="steps">
       <li>Add <code>AgentAdapter</code> (import at top, interface at end — type-only cycle)</li>
-      <li>Failing wiring unit test (mock startInteractive) → implement → pass</li>
-      <li>Write env-gated e2e (<code>CODEX_INTERACTIVE_E2E=1</code>)</li>
+      <li>Failing wiring unit test (mock startInteractive): delegates with resolved configDir; resolves from <code>CODEX_HOME</code>; throws when both absent → implement → pass</li>
+      <li>Write env-gated e2e (<code>CODEX_INTERACTIVE_E2E=1</code>, <code>configDir</code> from <code>CODEX_HOME</code>)</li>
       <li><code>pnpm test</code> green (e2e skipped) · Commit</li>
     </ul>
   </div>

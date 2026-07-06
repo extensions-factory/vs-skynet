@@ -8,6 +8,30 @@
 
 **Tech Stack:** TypeScript (`module: Node16`, strict, CommonJS emit), VSCode extension API (`vscode.window.createTerminal`), Node `child_process`/`fs/promises`/`events`, vitest (unit) + `@vscode/test-cli` (integration), Biome.
 
+## Output — what this delivers
+
+After all tasks land, you have **`codexAdapter.runInteractive(opts)`**: it drives a real `codex` TUI inside a VSCode terminal through a file mailbox — multi-turn steering with pause/resume in one live session.
+
+**What exists (by directory):**
+- `src/adapters/` — shared `types.ts` (worker events/usage/result, `AgentAdapter`) + pure `classifyError`.
+- `src/adapters/interactive/` — the CLI-agnostic core: `mailbox` (inbox/outbox + `protocol.md` + gitignore), `doorbell` (paste + submit key), `process-watch` (crash detection), `session-harvester` (newest rollout), `interactive-session` (the state machine), `config.ts` (**central** prompt strings + timing defaults), `vscode-terminal-transport`.
+- `src/adapters/codex/` — `interactive-profile` (launch argv, keymap overrides, rollout JSONL parser) + `codexAdapter`.
+
+**How one turn works:**
+1. `runInteractive` writes `protocol.md` + a turn-0 readiness inbox under `.skynet/<workerId>/`, then launches `codex` in a terminal.
+2. Synthetic **turn-0 readiness handshake** (re-pings once on `readyTimeoutMs`). Real turns (N ≥ 1) are **never** re-pinged — guarded only by `turnTimeoutMs`.
+3. `send(prompt)` writes `inbox/turn-N.md`, rings the doorbell, polls `outbox/turn-N.json` (~500ms) → a `TurnResult` (`paused` / `done` / `error` / `timeout` / `crashed`).
+4. `sessionId` + token usage are harvested from codex's own rollout JSONL; a sparse `WorkerEvent` async-iterator carries `started`/`message`/`usage`.
+5. `dispose()` deletes the mailbox dir and disposes the terminal. The project's own `AGENTS.md` is never touched.
+
+**CODEX_HOME — mandatory (multi-account isolation).** `codex` reads its account/auth from `CODEX_HOME`. Skynet orchestrates multiple agents as a team, each needing a **distinct account**, so `codexAdapter.runInteractive` **requires** `CODEX_HOME` (or `opts.configDir`) and **throws** without it. The resolved dir flows to the launch env (`configEnv` → `CODEX_HOME`) and the rollout-harvest lookup (`sessionDir`). On this machine: `CODEX_HOME=/Users/binn/.agents/codex-plus` (an isolated sandbox profile, not the global account).
+
+**Central config.** All agent-facing prompt strings (protocol / readiness / ping) and timing defaults (`turn` / `ready` / `crash-poll` / `launch-delay` / `mailbox-poll`) live in `src/adapters/interactive/config.ts` — tune wording and timeouts in one place.
+
+**Run:** `pnpm test` (unit + integration; real-CLI e2e skipped). Opt-in real e2e: `CODEX_HOME=/Users/binn/.agents/codex-plus CODEX_INTERACTIVE_E2E=1 pnpm run test:integration`.
+
+---
+
 ## Global Constraints
 
 - **pty/terminal only** (`CONSTITUTION.md`): no `codex exec --json`, no provider SDK. Interactive mailbox is the only run mode; a single-turn session is the fast path.
@@ -32,6 +56,7 @@ The interactive core imports shared types and a pure error classifier from `src/
 ### Task 0.1: Shared types + error classifier
 
 **Files:**
+- Modify: `tsconfig.json` (broaden test exclude)
 - Create: `src/adapters/types.ts`
 - Create: `src/adapters/classify.ts`
 - Test: `src/adapters/classify.test.ts`
@@ -44,7 +69,23 @@ The interactive core imports shared types and a pure error classifier from `src/
   - `interface WorkerResult { status: "success"|"failed"|"cancelled"; reason?: string; errorClass?: ErrorClass; usage?: WorkerUsage; lastMessage?: string }`
   - `function classifyError(text: string): ErrorClass`
 
-- [ ] **Step 1: Create the types file (no test — pure declarations)**
+- [ ] **Step 1: Exclude colocated vitest tests from the `tsc` build**
+
+The colocated unit tests (`src/adapters/**/*.test.ts`) `import ... from "vitest"`.
+vitest is ESM-only; under `module: Node16` (CommonJS emit) `tsc` fails these with
+`TS1479`. `pnpm run compile` (→ `tsc`) then breaks, which blocks
+`test:integration` (`compile && vscode-test`) and `pnpm test`. This is why the
+existing `src/extension.test.ts` is already excluded.
+
+Update `tsconfig.json` `exclude` to also cover the new colocated tests — **but
+not** `src/test/**` (the mocha integration tests, which must compile to
+`out/test/**/*.test.js` for `.vscode-test.mjs` to find them):
+
+```json
+"exclude": ["src/extension.test.ts", "src/adapters/**/*.test.ts", "src/test-utils/**"]
+```
+
+- [ ] **Step 2: Create the types file (no test — pure declarations)**
 
 Create `src/adapters/types.ts`:
 
@@ -77,7 +118,7 @@ export interface WorkerResult {
 }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 3: Write the failing test**
 
 Create `src/adapters/classify.test.ts`:
 
@@ -102,12 +143,12 @@ describe("classifyError", () => {
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Step 4: Run test to verify it fails**
 
 Run: `pnpm run test:unit src/adapters/classify.test.ts`
 Expected: FAIL — `Cannot find module './classify'`.
 
-- [ ] **Step 4: Write minimal implementation**
+- [ ] **Step 5: Write minimal implementation**
 
 Create `src/adapters/classify.ts`:
 
@@ -130,15 +171,15 @@ export function classifyError(text: string): ErrorClass {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 6: Run test to verify it passes**
 
 Run: `pnpm run test:unit src/adapters/classify.test.ts`
 Expected: PASS — all three cases green.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/adapters/types.ts src/adapters/classify.ts src/adapters/classify.test.ts
+git add tsconfig.json src/adapters/types.ts src/adapters/classify.ts src/adapters/classify.test.ts
 git commit -m "feat: shared adapter types + error classifier"
 ```
 
@@ -291,6 +332,86 @@ Expected: PASS.
 ```bash
 git add src/adapters/interactive/types.ts src/adapters/interactive/shell.ts src/adapters/interactive/shell.test.ts
 git commit -m "feat: interactive types + shell quoting"
+```
+
+---
+
+### Task 1.1: Central interactive config (prompts + timing defaults)
+
+The single place that owns every agent-facing prompt string and every default
+timeout. `interactive-session.ts` (Task 8) imports from here instead of defining
+them inline, so tuning the protocol wording or a timeout is a one-file edit.
+
+**Files:**
+- Create: `src/adapters/interactive/config.ts`
+
+**Interfaces:**
+- Produces:
+  - `const DEFAULT_TURN_TIMEOUT_MS`, `DEFAULT_READY_TIMEOUT_MS`, `DEFAULT_CRASH_POLL_MS`, `DEFAULT_LAUNCH_DELAY_MS`, `DEFAULT_MAILBOX_POLL_MS` (numbers).
+  - `function protocolText(rel: string): string`
+  - `function readinessInboxText(rel: string): string`
+  - `function readinessPing(rel: string): string`
+  - `function turnPing(rel: string, turn: number): string`
+  - `function turnInbox(prompt: string, rel: string, turn: number): string`
+
+No test: pure declarations + string interpolation, covered transitively by the
+Task 8 `interactive-session.test.ts` assertion on `protocol.md` contents.
+
+- [ ] **Step 1: Create the config module**
+
+Create `src/adapters/interactive/config.ts`:
+
+```ts
+// Central config for the interactive core. Agent-facing prompt wording and
+// every default timeout live here — tune them in one place, not in the state
+// machine. `rel` is the forward-slash mailbox dir (e.g. ".skynet/w1").
+
+export const DEFAULT_TURN_TIMEOUT_MS = 300_000;
+export const DEFAULT_READY_TIMEOUT_MS = 30_000;
+export const DEFAULT_CRASH_POLL_MS = 3_000;
+export const DEFAULT_LAUNCH_DELAY_MS = 1_500;
+export const DEFAULT_MAILBOX_POLL_MS = 500;
+
+export function protocolText(rel: string): string {
+  return [
+    `For each ${rel}/inbox/turn-N.md I give you: do the work it asks, then write`,
+    `${rel}/outbox/turn-N.json before you stop, matching the same N:`,
+    `- Readiness (turn 0), after reading this file -> {"status":"paused","summary":"ready"}`,
+    `- Pausing / need the next instruction -> {"status":"paused","summary":"<what you did>"}`,
+    `- Whole task complete -> {"status":"done","summary":"...","filesTouched":["..."]}`,
+    `- Unrecoverable error -> {"status":"error","reason":"..."}`,
+    "",
+    "Never delete inbox files. Write the outbox file in a single operation as the",
+    "last action of a turn (write turn-N.json.tmp, then rename to turn-N.json).",
+  ].join("\n");
+}
+
+export function readinessInboxText(rel: string): string {
+  return [
+    `You are connected through the skynet mailbox at ${rel}.`,
+    `Read ${rel}/protocol.md, then confirm you are ready by writing`,
+    `${rel}/outbox/turn-0.json = {"status":"paused","summary":"ready"} — do nothing else this turn.`,
+  ].join("\n");
+}
+
+export function readinessPing(rel: string): string {
+  return `Read ${rel}/protocol.md, then ${rel}/inbox/turn-0.md and follow it.`;
+}
+
+export function turnPing(rel: string, turn: number): string {
+  return `Read ${rel}/inbox/turn-${turn}.md and follow it.`;
+}
+
+export function turnInbox(prompt: string, rel: string, turn: number): string {
+  return `${prompt}\n\n(write ${rel}/outbox/turn-${turn}.json per protocol)`;
+}
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add src/adapters/interactive/config.ts
+git commit -m "feat: central interactive config (prompts + timing defaults)"
 ```
 
 ---
@@ -1216,7 +1337,7 @@ git commit -m "feat: real vscode.Terminal wrapper implementing TerminalTransport
 - Test: `src/adapters/interactive/interactive-session.test.ts`
 
 **Interfaces:**
-- Consumes: `Mailbox` (Task 2), `ring` (Task 3), `harvestSession` (Task 6), `buildLaunchCommand` (Task 1), `classifyError` from `../classify` (Task 0.1), `VscodeTerminalFactory` (Task 7), `hasLiveDescendant` (Task 4), all types from `./types` (Task 1).
+- Consumes: `Mailbox` (Task 2), `ring` (Task 3), `harvestSession` (Task 6), `buildLaunchCommand` (Task 1), prompt builders + timing defaults from `./config` (Task 1.1), `classifyError` from `../classify` (Task 0.1), `VscodeTerminalFactory` (Task 7), `hasLiveDescendant` (Task 4), all types from `./types` (Task 1).
 - Produces:
   - `interface StartInteractiveDeps { terminalFactory: TerminalFactory; checkAlive: (pid: number, matchName: string) => Promise<boolean>; crashPollMs: number; launchDelayMs: number; mailboxPollMs: number }`
   - `function startInteractive(profile: InteractiveCliProfile, opts: InteractiveOpts, deps?: Partial<StartInteractiveDeps>): Promise<InteractiveSession>`
@@ -1431,6 +1552,18 @@ Create `src/adapters/interactive/interactive-session.ts`:
 import { EventEmitter, once } from "node:events";
 import { classifyError } from "../classify";
 import type { WorkerEvent } from "../types";
+import {
+  DEFAULT_CRASH_POLL_MS,
+  DEFAULT_LAUNCH_DELAY_MS,
+  DEFAULT_MAILBOX_POLL_MS,
+  DEFAULT_READY_TIMEOUT_MS,
+  DEFAULT_TURN_TIMEOUT_MS,
+  protocolText,
+  readinessInboxText,
+  readinessPing,
+  turnInbox,
+  turnPing,
+} from "./config";
 import { ring } from "./doorbell";
 import { Mailbox } from "./mailbox";
 import { hasLiveDescendant } from "./process-watch";
@@ -1447,40 +1580,12 @@ import type {
 } from "./types";
 import { VscodeTerminalFactory } from "./vscode-terminal-transport";
 
-const DEFAULT_TURN_TIMEOUT_MS = 300_000;
-const DEFAULT_READY_TIMEOUT_MS = 30_000;
-const DEFAULT_CRASH_POLL_MS = 3_000;
-const DEFAULT_LAUNCH_DELAY_MS = 1_500;
-const DEFAULT_MAILBOX_POLL_MS = 500;
-
 export interface StartInteractiveDeps {
   terminalFactory: TerminalFactory;
   checkAlive: (pid: number, matchName: string) => Promise<boolean>;
   crashPollMs: number;
   launchDelayMs: number;
   mailboxPollMs: number;
-}
-
-function protocolText(rel: string): string {
-  return [
-    `For each ${rel}/inbox/turn-N.md I give you: do the work it asks, then write`,
-    `${rel}/outbox/turn-N.json before you stop, matching the same N:`,
-    `- Readiness (turn 0), after reading this file -> {"status":"paused","summary":"ready"}`,
-    `- Pausing / need the next instruction -> {"status":"paused","summary":"<what you did>"}`,
-    `- Whole task complete -> {"status":"done","summary":"...","filesTouched":["..."]}`,
-    `- Unrecoverable error -> {"status":"error","reason":"..."}`,
-    "",
-    "Never delete inbox files. Write the outbox file in a single operation as the",
-    "last action of a turn (write turn-N.json.tmp, then rename to turn-N.json).",
-  ].join("\n");
-}
-
-function readinessInboxText(rel: string): string {
-  return [
-    `You are connected through the skynet mailbox at ${rel}.`,
-    `Read ${rel}/protocol.md, then confirm you are ready by writing`,
-    `${rel}/outbox/turn-0.json = {"status":"paused","summary":"ready"} — do nothing else this turn.`,
-  ].join("\n");
 }
 
 export async function startInteractive(
@@ -1549,7 +1654,7 @@ class InteractiveSessionImpl implements InteractiveSession {
   async ready(): Promise<void> {
     const readyTimeoutMs = this.opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     await this.mailbox.writeInbox(0, readinessInboxText(this.mailbox.relativeDir));
-    const ping = `Read ${this.mailbox.relativeDir}/protocol.md, then ${this.mailbox.relativeDir}/inbox/turn-0.md and follow it.`;
+    const ping = readinessPing(this.mailbox.relativeDir);
 
     await ring(this.transport, ping, this.profile.submitSequence);
     let raw = await this.waitForOutbox(0, readyTimeoutMs);
@@ -1571,9 +1676,9 @@ class InteractiveSessionImpl implements InteractiveSession {
     this.turn += 1;
     const turn = this.turn;
 
-    const inbox = `${prompt}\n\n(write ${this.mailbox.relativeDir}/outbox/turn-${turn}.json per protocol)`;
+    const inbox = turnInbox(prompt, this.mailbox.relativeDir, turn);
     await this.mailbox.writeInbox(turn, inbox);
-    const ping = `Read ${this.mailbox.relativeDir}/inbox/turn-${turn}.md and follow it.`;
+    const ping = turnPing(this.mailbox.relativeDir, turn);
     await ring(this.transport, ping, this.profile.submitSequence);
 
     const turnTimeoutMs = this.opts.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
@@ -1767,10 +1872,38 @@ describe("codexAdapter", () => {
     expect(codexAdapter.id).toBe("codex");
   });
 
-  test("runInteractive delegates to startInteractive with the codex profile and opts", async () => {
-    const opts = { cwd: "/tmp/p", workerId: "w1" };
+  test("runInteractive delegates to startInteractive with the codex profile and resolved opts", async () => {
+    const opts = { cwd: "/tmp/p", workerId: "w1", configDir: "/home/acct" };
     await codexAdapter.runInteractive(opts);
     expect(startInteractive).toHaveBeenCalledWith(codexInteractive, opts);
+  });
+
+  test("resolves configDir from CODEX_HOME when opts.configDir is absent", async () => {
+    const prev = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = "/home/env-acct";
+    try {
+      await codexAdapter.runInteractive({ cwd: "/tmp/p", workerId: "w2" });
+      expect(startInteractive).toHaveBeenCalledWith(codexInteractive, {
+        cwd: "/tmp/p",
+        workerId: "w2",
+        configDir: "/home/env-acct",
+      });
+    } finally {
+      if (prev === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = prev;
+    }
+  });
+
+  test("throws when neither opts.configDir nor CODEX_HOME is set (mandatory account isolation)", async () => {
+    const prev = process.env.CODEX_HOME;
+    delete process.env.CODEX_HOME;
+    try {
+      await expect(codexAdapter.runInteractive({ cwd: "/tmp/p", workerId: "w3" })).rejects.toThrow(
+        /CODEX_HOME/
+      );
+    } finally {
+      if (prev !== undefined) process.env.CODEX_HOME = prev;
+    }
   });
 });
 ```
@@ -1792,8 +1925,17 @@ import { codexInteractive } from "./interactive-profile";
 
 export const codexAdapter: AgentAdapter = {
   id: "codex",
-  runInteractive(opts: InteractiveOpts): Promise<InteractiveSession> {
-    return startInteractive(codexInteractive, opts);
+  async runInteractive(opts: InteractiveOpts): Promise<InteractiveSession> {
+    // codex reads its account/auth from CODEX_HOME. Skynet orchestrates many
+    // agents on distinct accounts, so an isolated home is mandatory — never fall
+    // through to the global account. See the plan's Output section.
+    const configDir = opts.configDir ?? process.env.CODEX_HOME;
+    if (!configDir) {
+      throw new Error(
+        "codex requires an isolated CODEX_HOME: set the CODEX_HOME env var or pass opts.configDir",
+      );
+    }
+    return startInteractive(codexInteractive, { ...opts, configDir });
   },
 };
 ```
@@ -1817,7 +1959,13 @@ const RUN = process.env.CODEX_INTERACTIVE_E2E === "1";
 suite("codex interactive e2e (real CLI)", () => {
   (RUN ? test : test.skip)("drives readiness + two real turns against a real codex", async function () {
     this.timeout(300_000);
-    const session = await codexAdapter.runInteractive({ cwd: os.tmpdir(), workerId: "e2e" });
+    // Isolate from the global codex account: CODEX_HOME points at a sandbox
+    // profile. Passed through to the launch env and rollout harvest via configDir.
+    const session = await codexAdapter.runInteractive({
+      cwd: os.tmpdir(),
+      workerId: "e2e",
+      configDir: process.env.CODEX_HOME,
+    });
     try {
       const first = await session.send(
         "Create a file called hello.txt containing the word hi, then pause."
@@ -1841,7 +1989,8 @@ suite("codex interactive e2e (real CLI)", () => {
 Run (default, e2e skipped): `pnpm test`
 Expected: PASS — unit + integration green; the e2e case reports skipped.
 
-Run (opt-in, needs codex installed + signed in): `CODEX_INTERACTIVE_E2E=1 pnpm run test:integration`
+Run (opt-in, needs codex installed + signed in) — **use the isolated sandbox profile, not the global account**:
+`CODEX_HOME=/Users/binn/.agents/codex-plus CODEX_INTERACTIVE_E2E=1 pnpm run test:integration`
 Expected: PASS — the real-CLI case drives two turns and harvests a session id.
 
 - [ ] **Step 8: Commit**
