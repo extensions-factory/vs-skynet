@@ -12,4 +12,10 @@ describe("activate", () => {
 
 		expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(1);
 	});
+
+	it("mocks the terminal API surface imported by interactive adapters", () => {
+		expect(vscode.window.createTerminal).toBeTypeOf("function");
+		expect(vscode.window.onDidCloseTerminal).toBeTypeOf("function");
+		expect(vscode.commands.executeCommand).toBeTypeOf("function");
+	});
 });
