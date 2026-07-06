@@ -177,13 +177,19 @@ export class AgentSessionStateMachine {
   </ul>
 
   <h3>Edge notifier: <code>src/adapters/interactive/notify-awaiting-input.ts</code></h3>
-  <p>Co-located with the interactive adapter (S1): it operates on <code>InteractiveSession</code> and imports
-     <code>vscode</code>, matching the precedent of <code>vscode-terminal-transport.ts</code> in the same directory.
-     Not at the <code>src/</code> root, which holds only the composition root (<code>extension.ts</code>).</p>
-<pre>export function notifyOnAwaitingInput(
+  <p>Co-located with the interactive adapter (S1): it operates on <code>InteractiveSession</code>. It imports
+     <b>no</b> <code>vscode</code> — it takes an injected, structurally-<code>vscode.window</code>-compatible
+     <code>NotifyWindow</code>, keeping it fully unit-testable; the real composition root passes
+     <code>vscode.window</code>. Sits next to <code>vscode-terminal-transport.ts</code>, not at the <code>src/</code>
+     root (which holds only the composition root <code>extension.ts</code>).</p>
+<pre>export interface NotifyWindow {
+  showInformationMessage(message: string, ...items: string[]): Thenable&lt;string | undefined&gt;;
+}
+
+export function notifyOnAwaitingInput(
   session: InteractiveSession,
   label: string, // worker id, for the message text
-  win: Pick&lt;typeof vscode.window, "showInformationMessage"&gt;,
+  win: NotifyWindow,
   reveal: () =&gt; void,
 ): Promise&lt;void&gt;;</pre>
   <p>Iterates <code>session</code>, buffering the most recent <code>message</code> text. On a <code>status</code> event

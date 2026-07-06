@@ -370,11 +370,13 @@ Replace the class fields `private closed = false;` and `private closedByTerminal
 	private readonly buffered: WorkerEvent[] = [];
 	private readonly machine = new AgentSessionStateMachine((_, to) => {
 		this.pushEvent({ kind: "status", status: to });
-		if (this.machine.isTerminal) {
+		if (to === "done" || to === "failed" || to === "stopped") {
 			this.finalizeTerminal();
 		}
 	});
 ```
+
+(Check `to` directly rather than `this.machine.isTerminal` — avoids referencing the field from inside its own initializer, SF1.)
 
 Add the public getter (place beside the `sessionId` getter):
 
@@ -384,20 +386,13 @@ Add the public getter (place beside the `sessionId` getter):
 	}
 ```
 
-Add the `SessionStatus` import to the `./types` import group at the top:
+Merge `SessionStatus` into the **existing** `../types` import (the file already has `import type { WorkerEvent } from "../types";` at line 3 — extend that line rather than adding a second import from the same module, which Biome would flag, M2):
 
 ```ts
-import type {
-	HarvestResult,
-	InteractiveCliProfile,
-	InteractiveOpts,
-	InteractiveSession,
-	TerminalFactory,
-	TerminalTransport,
-	TurnResult,
-} from "./types";
-import type { SessionStatus } from "../types";
+import type { SessionStatus, WorkerEvent } from "../types";
 ```
+
+(The `./types` import group — `HarvestResult, InteractiveCliProfile, …, TurnResult` — is unchanged.)
 
 Change the constructor's terminal-close listener from setting the boolean to firing the transition:
 
@@ -438,6 +433,8 @@ In `send()`, replace the completed guard and add the `send` transition:
 In `waitForOutbox`, replace `if (this.closedByTerminal)` with a machine check — the terminal-close listener has already fired the transition, so:
 
 ```ts
+			// Only terminalClosed can set "failed" here: startupFailed fires
+			// after ready()'s waitForOutbox returns, turnFailed after send()'s.
 			if (this.machine.state === "failed") {
 				return "crashed";
 			}
@@ -495,7 +492,7 @@ In the async iterator, replace `if (this.closed)` with `if (this.machine.isTermi
 - [ ] **Step 6: Run the full interactive-session suite to verify all pass**
 
 Run: `pnpm exec vitest run src/adapters/interactive/interactive-session.test.ts`
-Expected: PASS — the two new tests plus all pre-existing tests (including "send() rejects once the session has completed", which now exercises the `machine.isTerminal` guard).
+Expected: PASS — the two new tests plus all pre-existing tests (including "send() rejects once the session has completed", which now exercises the `machine.isTerminal` guard). The one existing test that iterates events asserts with `toContainEqual` (a subset check), so the extra `status` events do not break it (SF3).
 
 - [ ] **Step 7: Run the whole unit suite and lint**
 
@@ -530,7 +527,7 @@ this in lands with F1.1/F1.3.
   - `interface NotifyWindow { showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>; }`
   - `function notifyOnAwaitingInput(session: InteractiveSession, label: string, win: NotifyWindow, reveal: () => void): Promise<void>`.
 
-Note: the notifier defines a minimal structural `NotifyWindow` rather than importing `vscode`, so it stays unit-testable with a fake. The real composition root passes `vscode.window`, which is structurally compatible.
+Note (deliberate deviation from spec, SF2): the spec's S1 note says the notifier "imports `vscode`," but this plan defines a minimal structural `NotifyWindow` and imports **no** `vscode` — strictly better for testability and consistent with the spec's own statement that `win`/`reveal` are injected. The real composition root passes `vscode.window`, which is structurally compatible with `NotifyWindow`. The spec has been updated to match.
 
 - [ ] **Step 1: Write the failing test**
 

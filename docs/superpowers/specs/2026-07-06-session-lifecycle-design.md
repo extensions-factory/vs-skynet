@@ -172,16 +172,26 @@ existing lifecycle point:
 ### Edge notifier: `src/adapters/interactive/notify-awaiting-input.ts`
 
 Co-located with the interactive adapter (S1): it operates on
-`InteractiveSession` and imports `vscode`, matching the precedent of
-`vscode-terminal-transport.ts`, the existing `vscode`-importing edge unit
-in this same directory. Not placed at the `src/` root, which holds only the
-composition root (`extension.ts`).
+`InteractiveSession`. It imports **no** `vscode` — instead it takes an
+injected, structurally-`vscode.window`-compatible window object (a minimal
+`NotifyWindow` interface), which keeps it fully unit-testable with a fake;
+the real composition root passes `vscode.window`. It sits next to
+`vscode-terminal-transport.ts` (the interactive adapter's other edge unit)
+rather than at the `src/` root, which holds only the composition root
+(`extension.ts`).
 
 ```ts
+export interface NotifyWindow {
+  showInformationMessage(
+    message: string,
+    ...items: string[]
+  ): Thenable<string | undefined>; // structurally compatible with vscode.window
+}
+
 export function notifyOnAwaitingInput(
   session: InteractiveSession,
   label: string, // worker id, for the message text
-  win: Pick<typeof import("vscode").window, "showInformationMessage">,
+  win: NotifyWindow,
   reveal: () => void,
 ): Promise<void>;
 ```

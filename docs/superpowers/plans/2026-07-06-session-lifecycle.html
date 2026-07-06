@@ -141,13 +141,15 @@ export class AgentSessionStateMachine {
 <pre>// field: replaces closed / closedByTerminal
 private readonly machine = new AgentSessionStateMachine((_, to) =&gt; {
 	this.pushEvent({ kind: "status", status: to });
-	if (this.machine.isTerminal) this.finalizeTerminal();
+	if (to === "done" || to === "failed" || to === "stopped") this.finalizeTerminal(); // SF1: check `to`, not this.machine
 });
 get status(): SessionStatus { return this.machine.state; }
 
+// import merge (M2): import type { SessionStatus, WorkerEvent } from "../types";
 // onDidClose(): this.machine.transition("terminalClosed");
 // sessionId getter / iterator: replace this.closed with this.machine.isTerminal
-// waitForOutbox: replace closedByTerminal check with `this.machine.state === "failed"`
+// waitForOutbox: replace closedByTerminal with `this.machine.state === "failed"`
+//   (SF4: only terminalClosed can set failed here — startupFailed/turnFailed fire after waitForOutbox returns)
 
 // ready(): failure path first, before dispose()
 this.machine.transition("startupFailed");
@@ -182,6 +184,9 @@ private finalizeTerminal(): void {
      <code>notify-awaiting-input.test.ts</code></p>
   <p><b>Produces:</b> <code>interface NotifyWindow</code> (structural, no <code>vscode</code> import) +
      <code>notifyOnAwaitingInput(session, label, win, reveal)</code>.</p>
+  <p class="mut">Deliberate deviation from spec (SF2): spec's S1 note said "imports <code>vscode</code>"; this plan uses an
+     injected structural <code>NotifyWindow</code> instead — better for testability; real composition root passes
+     <code>vscode.window</code>. Spec updated to match.</p>
   <ul class="steps">
     <li>Step 1: write the failing test — shows message with buffered summary + reveals on action; no reveal on dismiss.</li>
     <li>Step 2: <span class="cmd">pnpm exec vitest run …/notify-awaiting-input.test.ts</span> → FAIL (unresolved).</li>
