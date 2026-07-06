@@ -121,7 +121,18 @@ describe("sendTaskCommand", () => {
 		expect(send).not.toHaveBeenCalled();
 		expect(win.showInputBox).not.toHaveBeenCalled();
 		expect(win.showInformationMessage).toHaveBeenCalledWith(
-			"Agent is busy — wait for the current turn to finish.",
+			"Agent isn't available right now — try again in a moment.",
+		);
+	});
+
+	test("refuses when launching, without sending", async () => {
+		const { session, send } = fakeSession("launching");
+		const win = fakeWindow();
+		await sendTaskCommand(() => session, win);
+		expect(send).not.toHaveBeenCalled();
+		expect(win.showInputBox).not.toHaveBeenCalled();
+		expect(win.showInformationMessage).toHaveBeenCalledWith(
+			"Agent isn't available right now — try again in a moment.",
 		);
 	});
 
@@ -134,15 +145,18 @@ describe("sendTaskCommand", () => {
 		);
 	});
 
-	test("reports no running agent when the session is terminal", async () => {
-		const { session, send } = fakeSession("stopped");
-		const win = fakeWindow();
-		await sendTaskCommand(() => session, win);
-		expect(send).not.toHaveBeenCalled();
-		expect(win.showInformationMessage).toHaveBeenCalledWith(
-			"No running agent. Start one first.",
-		);
-	});
+	test.each(["stopped", "failed", "done"] as const)(
+		"reports no running agent when the session is %s",
+		async (status) => {
+			const { session, send } = fakeSession(status);
+			const win = fakeWindow();
+			await sendTaskCommand(() => session, win);
+			expect(send).not.toHaveBeenCalled();
+			expect(win.showInformationMessage).toHaveBeenCalledWith(
+				"No running agent. Start one first.",
+			);
+		},
+	);
 
 	test("does not send when the input box is dismissed", async () => {
 		const { session, send } = fakeSession("ready");
@@ -178,7 +192,7 @@ describe("sendTaskCommand", () => {
 			sendTaskCommand(() => session, win),
 		).resolves.toBeUndefined();
 		expect(win.showErrorMessage).toHaveBeenCalledWith(
-			"Failed to send task: Error: illegal transition: busy -/send",
+			"Failed to send task: illegal transition: busy -/send",
 		);
 	});
 });
@@ -226,8 +240,10 @@ export async function sendTaskCommand(
 		return;
 	}
 	if (!SENDABLE.has(session.status)) {
+		// Covers busy (a turn is running) and launching (not ready yet) with
+		// one accurate message — neither has a prompt the user can add to.
 		await win.showInformationMessage(
-			"Agent is busy — wait for the current turn to finish.",
+			"Agent isn't available right now — try again in a moment.",
 		);
 		return;
 	}
@@ -257,7 +273,8 @@ export async function sendTaskCommand(
 				break;
 		}
 	} catch (err) {
-		await win.showErrorMessage(`Failed to send task: ${String(err)}`);
+		const detail = err instanceof Error ? err.message : String(err);
+		await win.showErrorMessage(`Failed to send task: ${detail}`);
 	}
 }
 ```
@@ -265,7 +282,7 @@ export async function sendTaskCommand(
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts`
-Expected: PASS — all 9 `sendTaskCommand` tests green.
+Expected: PASS — all `sendTaskCommand` tests green (send happy paths, launching/busy refusal, three terminal states, dismissed/empty input, error result, thrown-send caught).
 
 - [ ] **Step 5: Lint**
 
@@ -295,17 +312,30 @@ git commit -m "feat: sendTaskCommand hand-off handler"
 
 - [ ] **Step 1: Extend the vscode mock**
 
-In `src/test-utils/vscode-mock.ts`, add to the `window` object (after `showInformationMessage`):
+In `src/test-utils/vscode-mock.ts`, add `showInputBox` and `showErrorMessage` to the existing `window` object, right after the existing `showInformationMessage: vi.fn()` line. Do NOT re-add `showInformationMessage` — it is already there (duplicate keys would shadow and trip Biome). Add only these two lines:
 
 ```ts
-	showInformationMessage: vi.fn(),
 	showInputBox: vi.fn(),
 	showErrorMessage: vi.fn(),
 ```
 
-- [ ] **Step 2: Update the extension test to expect the real command**
+- [ ] **Step 2: Reset mocks and expect the real command in the extension test**
 
-Replace the `"registers exactly one command"` test in `src/extension.test.ts` with:
+In `src/extension.test.ts`, first widen the vitest import to include `beforeEach` and `vi`:
+
+```ts
+import { beforeEach, describe, expect, it, vi } from "vitest";
+```
+
+Add a mock reset as the first statement inside `describe("activate", …)`, so `registerCommand` call history doesn't accumulate across tests (`clearAllMocks` clears call history but keeps the mock implementations, so `createTerminal` still returns its fake):
+
+```ts
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+```
+
+Then replace the `"registers exactly one command"` test with:
 
 ```ts
 	it("registers the send-task command", () => {
@@ -391,8 +421,8 @@ git commit -m "feat: register skynet.sendTask and establish the active-session h
 Run: `pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts src/extension.test.ts`
 Expected:
 - GIVEN `ready`/`awaiting-input` + entered prompt → `send(prompt)` called, `TurnResult` summary shown (`"sends the entered prompt…"`, `"sends when awaiting-input"`, `"surfaces an error TurnResult…"`).
-- GIVEN `busy` → `send` not called, busy message shown (`"refuses when busy…"`).
-- GIVEN no/terminal session → `send` not called, "No running agent" shown (`"reports no running agent…"` ×2).
+- GIVEN `busy` or `launching` → `send` not called, "isn't available right now" shown (`"refuses when busy…"`, `"refuses when launching…"`).
+- GIVEN no session, or any terminal state (`stopped`/`failed`/`done`) → `send` not called, "No running agent" shown (`"reports no running agent when there is no session"`, `"reports no running agent when the session is %s"` ×3).
 - GIVEN dismissed/empty input → nothing sent (`"does not send when the input box is dismissed"`, `"…empty"`).
 - `skynet.sendTask` registered in the extension (`"registers the send-task command"`).
 
@@ -424,11 +454,14 @@ describe("stopAgentCommand", () => {
 		expect(win.showInformationMessage).toHaveBeenCalledWith("Agent stopped.");
 	});
 
-	test("disposes while launching", async () => {
-		const { session } = fakeSession("launching");
-		await stopAgentCommand(() => session, fakeWindow());
-		expect(session.dispose).toHaveBeenCalledTimes(1);
-	});
+	test.each(["ready", "awaiting-input", "launching"] as const)(
+		"disposes a %s session",
+		async (status) => {
+			const { session } = fakeSession(status);
+			await stopAgentCommand(() => session, fakeWindow());
+			expect(session.dispose).toHaveBeenCalledTimes(1);
+		},
+	);
 
 	test("reports nothing to stop when there is no session", async () => {
 		const win = fakeWindow();
@@ -580,6 +613,6 @@ git commit -m "feat: register skynet.stopAgent command"
 
 Run: `pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts src/extension.test.ts`
 Expected:
-- GIVEN any non-terminal state → `dispose()` called once, "Agent stopped." shown (`"disposes a non-terminal session…"`, `"disposes while launching"`).
+- GIVEN any non-terminal state (`busy`/`ready`/`awaiting-input`/`launching`) → `dispose()` called once, "Agent stopped." shown (`"disposes a non-terminal session…"`, `"disposes a %s session"` ×3).
 - GIVEN no/terminal session → `dispose()` not called, "No running agent to stop." shown (`"reports nothing to stop…"`, `"does not dispose an already-terminal session"`).
 - `skynet.stopAgent` registered in the extension (`"registers the stop-agent command"`).

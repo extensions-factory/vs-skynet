@@ -104,9 +104,9 @@
     <p class="files"><b>Produces:</b> <code>HandoffWindow</code>,
        <code>sendTaskCommand(getSession, win): Promise&lt;void&gt;</code></p>
     <ul class="steps">
-      <li>Write 9 failing tests (ready/awaiting-input send, busy refuse, no/terminal session, dismissed/empty input, error result, thrown send caught)</li>
+      <li>Write failing tests (ready/awaiting-input send; busy &amp; launching → "isn't available"; no session + all three terminal states; dismissed/empty input; error result; thrown send caught with <code>err.message</code>)</li>
       <li>Run — verify they fail (import unresolved)</li>
-      <li>Implement <code>sendTaskCommand</code> + <code>SENDABLE</code>/<code>TERMINAL</code> guards + <code>TurnResult</code> switch</li>
+      <li>Implement <code>sendTaskCommand</code> + <code>SENDABLE</code>/<code>TERMINAL</code> guards + <code>TurnResult</code> switch (one neutral message covers busy + launching)</li>
       <li>Run — verify pass</li>
       <li>Lint</li>
       <li>Commit <code>feat: sendTaskCommand hand-off handler</code></li>
@@ -120,8 +120,8 @@
        <code>vscode-mock.ts</code>, <code>package.json</code></p>
     <p class="files"><b>Produces:</b> <code>setActiveSession(session): void</code> — the single-session holder F1.1 plugs into</p>
     <ul class="steps">
-      <li>Add <code>showInputBox</code>/<code>showErrorMessage</code> to the vscode mock</li>
-      <li>Update extension test to expect <code>skynet.sendTask</code> registration</li>
+      <li>Add only <code>showInputBox</code>/<code>showErrorMessage</code> to the vscode mock (keep the existing <code>showInformationMessage</code>)</li>
+      <li>Add <code>beforeEach(vi.clearAllMocks)</code> + expect <code>skynet.sendTask</code> registration</li>
       <li>Run — verify it fails (still <code>helloWorld</code>)</li>
       <li>Rewrite <code>extension.ts</code>: hold <code>activeSession</code>, export <code>setActiveSession</code>, register <code>skynet.sendTask</code></li>
       <li>Replace <code>helloWorld</code> palette entry with <code>Skynet: Send Task</code></li>
@@ -131,8 +131,8 @@
 
   <div class="chk"><b>US-1 Checkpoint:</b>
      <code>pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts src/extension.test.ts</code> — ready/awaiting
-     send &amp; show summary; busy refused; no/terminal → "No running agent"; dismissed/empty → nothing sent;
-     <code>skynet.sendTask</code> registered.</div>
+     send &amp; show summary; busy/launching → "isn't available"; no session + all three terminal states → "No running
+     agent"; dismissed/empty → nothing sent; <code>skynet.sendTask</code> registered.</div>
 
   <h2>US-2 · Stop the running agent</h2>
 
@@ -142,7 +142,7 @@
     <p class="files"><b>Modify:</b> <code>task-handoff.ts</code>, <code>task-handoff.test.ts</code></p>
     <p class="files"><b>Produces:</b> <code>stopAgentCommand(getSession, win): Promise&lt;void&gt;</code></p>
     <ul class="steps">
-      <li>Write failing tests (dispose non-terminal + confirm, dispose while launching, no session, no double-dispose terminal)</li>
+      <li>Write failing tests (dispose + confirm for busy/ready/awaiting-input/launching, no session, no double-dispose terminal)</li>
       <li>Run — verify they fail</li>
       <li>Add <code>stopAgentCommand</code> (reuses <code>TERMINAL</code> guard + <code>dispose()</code>)</li>
       <li>Run — verify pass · Lint · Commit <code>feat: stopAgentCommand hand-off handler</code></li>
@@ -163,9 +163,9 @@
   </div>
 
   <div class="chk"><b>US-2 Checkpoint:</b>
-     <code>pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts src/extension.test.ts</code> — non-terminal
-     → <code>dispose()</code> once + "Agent stopped."; launching disposes; no/terminal → "No running agent to stop." no
-     dispose; <code>skynet.stopAgent</code> registered.</div>
+     <code>pnpm exec vitest run src/adapters/interactive/task-handoff.test.ts src/extension.test.ts</code> — every
+     non-terminal state (busy/ready/awaiting-input/launching) → <code>dispose()</code> once + "Agent stopped.";
+     no/terminal → "No running agent to stop." no dispose; <code>skynet.stopAgent</code> registered.</div>
 
   <footer>Skynet · E1 F1.3 Task hand-off plan · source of truth is the Markdown plan alongside this file · 2026-07-06.</footer>
 </div>
