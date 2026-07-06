@@ -1,6 +1,6 @@
 import { EventEmitter, once } from "node:events";
 import { classifyError } from "../classify";
-import type { WorkerEvent } from "../types";
+import type { SessionStatus, WorkerEvent } from "../types";
 import {
 	DEFAULT_CRASH_POLL_MS,
 	DEFAULT_LAUNCH_DELAY_MS,
@@ -17,6 +17,7 @@ import { ring } from "./doorbell";
 import { Mailbox } from "./mailbox";
 import { hasLiveDescendant } from "./process-watch";
 import { harvestSession } from "./session-harvester";
+import { AgentSessionStateMachine } from "./session-state-machine";
 import { buildLaunchCommand } from "./shell";
 import type {
 	HarvestResult,
@@ -81,11 +82,15 @@ export async function startInteractive(
 
 class InteractiveSessionImpl implements InteractiveSession {
 	private turn = 0;
-	private closed = false;
-	private closedByTerminal = false;
 	private _sessionId: string | undefined;
 	private readonly emitter = new EventEmitter();
 	private readonly buffered: WorkerEvent[] = [];
+	private readonly machine = new AgentSessionStateMachine((_, to) => {
+		this.pushEvent({ kind: "status", status: to });
+		if (to === "done" || to === "failed" || to === "stopped") {
+			this.finalizeTerminal();
+		}
+	});
 
 	constructor(
 		private readonly profile: InteractiveCliProfile,
@@ -96,15 +101,19 @@ class InteractiveSessionImpl implements InteractiveSession {
 		private readonly startedAtMs: number,
 	) {
 		transport.onDidClose(() => {
-			this.closedByTerminal = true;
+			this.machine.transition("terminalClosed");
 		});
+	}
+
+	get status(): SessionStatus {
+		return this.machine.state;
 	}
 
 	get sessionId(): Promise<string | undefined> {
 		if (this._sessionId !== undefined) {
 			return Promise.resolve(this._sessionId);
 		}
-		if (this.closed) {
+		if (this.machine.isTerminal) {
 			return Promise.resolve(undefined);
 		}
 		return once(this.emitter, "sessionId").then(
@@ -127,16 +136,19 @@ class InteractiveSessionImpl implements InteractiveSession {
 			raw = await this.waitForOutbox(0, readyTimeoutMs, false);
 		}
 		if (raw === "timeout" || raw === "crashed") {
+			this.machine.transition("startupFailed");
 			await this.dispose();
 			throw new Error(`interactive session not ready: ${String(raw)}`);
 		}
 		await this.harvestInto();
+		this.machine.transition("readyOutbox");
 	}
 
 	async send(prompt: string): Promise<TurnResult> {
-		if (this.closed) {
+		if (this.machine.isTerminal) {
 			throw new Error("session already completed");
 		}
+		this.machine.transition("send");
 		this.turn += 1;
 		const turn = this.turn;
 
@@ -164,7 +176,7 @@ class InteractiveSessionImpl implements InteractiveSession {
 		let nextCrashCheck = Date.now() + this.deps.crashPollMs;
 
 		while (Date.now() < deadline) {
-			if (this.closedByTerminal) {
+			if (this.machine.state === "failed") {
 				return "crashed";
 			}
 			if (checkCrash && Date.now() >= nextCrashCheck) {
@@ -249,14 +261,16 @@ class InteractiveSessionImpl implements InteractiveSession {
 		if (base.status === "paused" || base.status === "done") {
 			this.pushEvent({ kind: "message", text: base.summary });
 		}
-		const result: TurnResult =
-			base.status === "done" && harvested.usage
-				? { ...base, usage: harvested.usage }
-				: base;
-		if (result.status !== "paused") {
-			this.finish();
+		if (base.status === "paused") {
+			this.machine.transition("turnPaused");
+		} else if (base.status === "done") {
+			this.machine.transition("turnDone");
+		} else {
+			this.machine.transition("turnFailed");
 		}
-		return result;
+		return base.status === "done" && harvested.usage
+			? { ...base, usage: harvested.usage }
+			: base;
 	}
 
 	private pushEvent(event: WorkerEvent): void {
@@ -264,21 +278,16 @@ class InteractiveSessionImpl implements InteractiveSession {
 		this.emitter.emit("event");
 	}
 
-	private finish(): void {
-		if (this.closed) {
-			return;
-		}
-		this.closed = true;
-		this.emitter.emit("event");
+	private finalizeTerminal(): void {
 		if (this._sessionId === undefined) {
 			this.emitter.emit("sessionId", undefined);
 		}
 	}
 
 	async dispose(): Promise<void> {
+		this.machine.transition("dispose");
 		await this.mailbox.dispose();
 		this.transport.dispose();
-		this.finish();
 	}
 
 	async *[Symbol.asyncIterator](): AsyncIterator<WorkerEvent> {
@@ -288,7 +297,7 @@ class InteractiveSessionImpl implements InteractiveSession {
 				yield this.buffered[index];
 				index += 1;
 			}
-			if (this.closed) {
+			if (this.machine.isTerminal) {
 				return;
 			}
 			await once(this.emitter, "event");
