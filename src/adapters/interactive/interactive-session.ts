@@ -285,9 +285,9 @@ class InteractiveSessionImpl implements InteractiveSession {
 	}
 
 	async dispose(): Promise<void> {
+		this.machine.transition("dispose");
 		await this.mailbox.dispose();
 		this.transport.dispose();
-		this.machine.transition("dispose");
 	}
 
 	async *[Symbol.asyncIterator](): AsyncIterator<WorkerEvent> {

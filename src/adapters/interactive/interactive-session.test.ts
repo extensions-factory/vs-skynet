@@ -6,6 +6,13 @@ import { startInteractive } from "./interactive-session";
 import { FakeTerminalTransport } from "./test-helpers/fake-terminal-transport";
 import type { InteractiveCliProfile } from "./types";
 
+class ClosingOnDisposeTransport extends FakeTerminalTransport {
+	override dispose(): void {
+		this.simulateClose();
+		super.dispose();
+	}
+}
+
 function fakeProfile(
 	overrides: Partial<InteractiveCliProfile> = {},
 ): InteractiveCliProfile {
@@ -184,6 +191,21 @@ describe("InteractiveSession", () => {
 		expect(result.status).toBe("crashed");
 		expect(session.status).toBe("failed");
 		await session.dispose();
+	});
+
+	test("dispose wins over a synchronous terminal close", async () => {
+		const cwd = await mkTmpRepo();
+		const transport = new ClosingOnDisposeTransport();
+		const startPromise = startInteractive(
+			fakeProfile(),
+			{ cwd, workerId: "s3", readyTimeoutMs: 2_000, turnTimeoutMs: 2_000 },
+			fastDeps(transport),
+		);
+		writeOutbox(cwd, "s3", 0, { status: "paused", summary: "ready" }, 20);
+		const session = await startPromise;
+
+		await session.dispose();
+		expect(session.status).toBe("stopped");
 	});
 
 	test("a real turn slower than readyTimeoutMs is NOT re-pinged (no duplicate execution)", async () => {
