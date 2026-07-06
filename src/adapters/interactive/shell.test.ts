@@ -18,12 +18,7 @@ describe("shellQuote", () => {
 describe("buildLaunchCommand", () => {
 	test("joins the binary name with each quoted argv token", () => {
 		expect(
-			buildLaunchCommand("codex", [
-				"-C",
-				"/tmp/proj",
-				"-s",
-				"workspace-write",
-			]),
+			buildLaunchCommand("codex", ["-C", "/tmp/proj", "-s", "workspace-write"]),
 		).toBe("codex '-C' '/tmp/proj' '-s' 'workspace-write'");
 	});
 });

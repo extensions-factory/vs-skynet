@@ -47,6 +47,8 @@ export class FakeTerminalTransport implements TerminalTransport {
 	}
 
 	simulateClose(exitCode?: number): void {
-		this.closeListeners.forEach((listener) => listener(exitCode));
+		this.closeListeners.forEach((listener) => {
+			listener(exitCode);
+		});
 	}
 }

@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { HarvestResult, InteractiveCliProfile } from "./types";
@@ -14,7 +15,7 @@ export async function harvestSession(
 }
 
 async function newestFileRecursive(dir: string): Promise<string | undefined> {
-	let entries;
+	let entries: Dirent[];
 	try {
 		entries = await fs.readdir(dir, { withFileTypes: true });
 	} catch {

@@ -44,13 +44,7 @@ describe("Mailbox", () => {
 		const cwd = await mkTmpRepo();
 		const mailbox = new Mailbox(cwd, "w3");
 		await mailbox.ensureDirs();
-		const outboxFile = path.join(
-			cwd,
-			".skynet",
-			"w3",
-			"outbox",
-			"turn-1.json",
-		);
+		const outboxFile = path.join(cwd, ".skynet", "w3", "outbox", "turn-1.json");
 
 		await fs.writeFile(outboxFile, '{"status":"paus');
 		expect(await mailbox.tryReadOutbox(1)).toBeUndefined();

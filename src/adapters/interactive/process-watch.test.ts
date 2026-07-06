@@ -17,7 +17,10 @@ describe("hasLiveDescendant", () => {
 
 	test("returns false for a pid with no matching descendants", async () => {
 		expect(
-			await hasLiveDescendant(process.pid, "definitely-not-a-real-process-name"),
+			await hasLiveDescendant(
+				process.pid,
+				"definitely-not-a-real-process-name",
+			),
 		).toBe(false);
 	});
 });

@@ -10,9 +10,9 @@ export class VscodeTerminalTransport implements TerminalTransport {
 	constructor(private readonly terminal: vscode.Terminal) {
 		this.closeSub = vscode.window.onDidCloseTerminal((closed) => {
 			if (closed === this.terminal) {
-				this.closeListeners.forEach((listener) =>
-					listener(closed.exitStatus?.code),
-				);
+				this.closeListeners.forEach((listener) => {
+					listener(closed.exitStatus?.code);
+				});
 			}
 		});
 	}
@@ -28,9 +28,12 @@ export class VscodeTerminalTransport implements TerminalTransport {
 	async sendSequence(sequence: string): Promise<void> {
 		// ponytail: `sendSequence` targets the active terminal, not `this.terminal`.
 		// The doorbell calls show(false) first; revisit if multi-terminal races appear.
-		await vscode.commands.executeCommand("workbench.action.terminal.sendSequence", {
-			text: sequence,
-		});
+		await vscode.commands.executeCommand(
+			"workbench.action.terminal.sendSequence",
+			{
+				text: sequence,
+			},
+		);
 	}
 
 	async processId(): Promise<number | undefined> {

@@ -60,7 +60,10 @@ export async function startInteractive(
 		cwd: opts.cwd,
 		env: profile.configEnv(opts.configDir),
 	});
-	transport.sendText(buildLaunchCommand(profile.id, profile.launchArgv(opts)), true);
+	transport.sendText(
+		buildLaunchCommand(profile.id, profile.launchArgv(opts)),
+		true,
+	);
 	await delay(resolved.launchDelayMs);
 
 	const session = new InteractiveSessionImpl(
@@ -149,7 +152,10 @@ class InteractiveSessionImpl implements InteractiveSession {
 		return this.afterTurn(this.toTurnResult(raw));
 	}
 
-	private async waitForOutbox(turn: number, timeoutMs: number): Promise<unknown> {
+	private async waitForOutbox(
+		turn: number,
+		timeoutMs: number,
+	): Promise<unknown> {
 		const deadline = Date.now() + timeoutMs;
 		let nextCrashCheck = Date.now() + this.deps.crashPollMs;
 
@@ -171,7 +177,9 @@ class InteractiveSessionImpl implements InteractiveSession {
 			if (raw !== undefined) {
 				return raw;
 			}
-			await delay(Math.min(this.deps.mailboxPollMs, Math.max(0, deadline - Date.now())));
+			await delay(
+				Math.min(this.deps.mailboxPollMs, Math.max(0, deadline - Date.now())),
+			);
 		}
 		return "timeout";
 	}

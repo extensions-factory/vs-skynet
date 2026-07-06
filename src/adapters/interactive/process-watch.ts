@@ -21,7 +21,10 @@ export async function hasLiveDescendant(
 	const queue = [pid];
 	const seen = new Set<number>();
 	while (queue.length) {
-		const current = queue.shift()!;
+		const current = queue.shift();
+		if (current === undefined) {
+			continue;
+		}
 		if (seen.has(current)) {
 			continue;
 		}

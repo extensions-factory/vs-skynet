@@ -49,7 +49,9 @@ export interface TerminalTransport {
 	sendText(text: string, addNewLine: boolean): void;
 	sendSequence(sequence: string): Promise<void>;
 	processId(): Promise<number | undefined>;
-	onDidClose(listener: (exitCode: number | undefined) => void): { dispose(): void };
+	onDidClose(listener: (exitCode: number | undefined) => void): {
+		dispose(): void;
+	};
 	dispose(): void;
 }
 

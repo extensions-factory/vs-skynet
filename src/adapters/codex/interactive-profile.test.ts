@@ -25,12 +25,24 @@ const TOKEN_COUNT_LINE = JSON.stringify({
 				reasoning_output_tokens: 53,
 				total_tokens: 16729,
 			},
-			last_token_usage: { input_tokens: 16660, output_tokens: 69, total_tokens: 16729 },
+			last_token_usage: {
+				input_tokens: 16660,
+				output_tokens: 69,
+				total_tokens: 16729,
+			},
 			model_context_window: 258400,
 		},
 		rate_limits: {
-			primary: { used_percent: 28.0, window_minutes: 300, resets_at: 1782842455 },
-			secondary: { used_percent: 30.0, window_minutes: 10080, resets_at: 1783393060 },
+			primary: {
+				used_percent: 28.0,
+				window_minutes: 300,
+				resets_at: 1782842455,
+			},
+			secondary: {
+				used_percent: 30.0,
+				window_minutes: 10080,
+				resets_at: 1783393060,
+			},
 			plan_type: "plus",
 		},
 	},
@@ -56,7 +68,9 @@ const LATER_TOKEN_COUNT_LINE = JSON.stringify({
 
 describe("parseCodexRollout", () => {
 	test("extracts sessionId, cumulative usage, and rate limits", () => {
-		const result = parseCodexRollout([SESSION_META_LINE, TOKEN_COUNT_LINE].join("\n"));
+		const result = parseCodexRollout(
+			[SESSION_META_LINE, TOKEN_COUNT_LINE].join("\n"),
+		);
 		expect(result.sessionId).toBe("019f1953-71c9-7c41-b8fb-c841283efe1e");
 		expect(result.usage).toEqual({
 			inputTokens: 16660,
@@ -76,7 +90,9 @@ describe("parseCodexRollout", () => {
 	});
 
 	test("ignores blank lines and non-JSON noise", () => {
-		const result = parseCodexRollout(["", "  ", "not json", SESSION_META_LINE].join("\n"));
+		const result = parseCodexRollout(
+			["", "  ", "not json", SESSION_META_LINE].join("\n"),
+		);
 		expect(result.sessionId).toBe("019f1953-71c9-7c41-b8fb-c841283efe1e");
 	});
 
@@ -115,7 +131,9 @@ describe("codexInteractive profile", () => {
 	});
 
 	test("configEnv sets CODEX_HOME only when a configDir is given", () => {
-		expect(codexInteractive.configEnv("/home/x")).toEqual({ CODEX_HOME: "/home/x" });
+		expect(codexInteractive.configEnv("/home/x")).toEqual({
+			CODEX_HOME: "/home/x",
+		});
 		expect(codexInteractive.configEnv()).toEqual({});
 	});
 
