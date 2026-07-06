@@ -685,7 +685,9 @@
   const emptyNote = document.getElementById('emptyNote');
 
   function apply(status){
-    items.forEach(i => i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status));
+    items.forEach(i => {
+      i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status);
+    });
     let anyVisible = false;
     sections.forEach(s => {
       const visible = s.querySelectorAll('.item:not(.hide)').length > 0;
@@ -695,11 +697,15 @@
     emptyNote.classList.toggle('hide', anyVisible);
   }
 
-  chips.forEach(chip => chip.addEventListener('click', () => {
-    chips.forEach(c => c.classList.remove('active'));
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chips.forEach(c => {
+        c.classList.remove('active');
+      });
     chip.classList.add('active');
     apply(chip.dataset.status);
-  }));
+    });
+  });
 </script>
 </body>
 </html>
