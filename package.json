@@ -19,6 +19,11 @@
 				"command": "skynet.sendTask",
 				"title": "Send Task",
 				"category": "Skynet"
+			},
+			{
+				"command": "skynet.stopAgent",
+				"title": "Stop Agent",
+				"category": "Skynet"
 			}
 		]
 	},
