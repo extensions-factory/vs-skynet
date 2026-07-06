@@ -1,16 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { activate } from "./extension";
 
 describe("activate", () => {
-	it("registers exactly one command", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("registers the send-task command", () => {
 		const context = { subscriptions: [] } as unknown as Parameters<
 			typeof activate
 		>[0];
 
 		activate(context);
 
-		expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(1);
+		expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+			"skynet.sendTask",
+			expect.any(Function),
+		);
 	});
 
 	it("mocks the terminal API surface imported by interactive adapters", () => {

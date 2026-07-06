@@ -16,8 +16,9 @@
 	"contributes": {
 		"commands": [
 			{
-				"command": "skynet.helloWorld",
-				"title": "Hello World"
+				"command": "skynet.sendTask",
+				"title": "Send Task",
+				"category": "Skynet"
 			}
 		]
 	},
