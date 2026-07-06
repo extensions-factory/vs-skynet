@@ -59,4 +59,25 @@ describe("harvestSession", () => {
 		expect(seenText).toEqual(["new-content"]);
 		expect(result).toEqual({ sessionId: "found-it" });
 	});
+
+	test("ignores rollout files older than the session start time", async () => {
+		const root = await mkTmpDir();
+		const stale = path.join(root, "rollout-stale.jsonl");
+		await fs.writeFile(stale, "stale-content");
+		const staleTime = new Date(Date.now() - 60_000);
+		await fs.utimes(stale, staleTime, staleTime);
+
+		const seenText: string[] = [];
+		const result = await harvestSession(
+			fakeProfile(root, (text) => {
+				seenText.push(text);
+				return { sessionId: "stale-session" };
+			}),
+			undefined,
+			Date.now() - 1_000,
+		);
+
+		expect(seenText).toEqual([]);
+		expect(result).toEqual({});
+	});
 });

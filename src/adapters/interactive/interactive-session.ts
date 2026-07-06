@@ -54,6 +54,7 @@ export async function startInteractive(
 	await mailbox.ensureDirs();
 	await mailbox.ensureGitignored(opts.cwd);
 	await mailbox.writeProtocol(protocolText(mailbox.relativeDir));
+	const startedAtMs = Date.now();
 
 	const transport = resolved.terminalFactory.create({
 		name: `${profile.id}-interactive-${opts.workerId}`,
@@ -72,6 +73,7 @@ export async function startInteractive(
 		mailbox,
 		transport,
 		resolved,
+		startedAtMs,
 	);
 	await session.ready();
 	return session;
@@ -91,6 +93,7 @@ class InteractiveSessionImpl implements InteractiveSession {
 		private readonly mailbox: Mailbox,
 		private readonly transport: TerminalTransport,
 		private readonly deps: StartInteractiveDeps,
+		private readonly startedAtMs: number,
 	) {
 		transport.onDidClose(() => {
 			this.closedByTerminal = true;
@@ -118,10 +121,10 @@ class InteractiveSessionImpl implements InteractiveSession {
 		const ping = readinessPing(this.mailbox.relativeDir);
 
 		await ring(this.transport, ping, this.profile.submitSequence);
-		let raw = await this.waitForOutbox(0, readyTimeoutMs);
+		let raw = await this.waitForOutbox(0, readyTimeoutMs, false);
 		if (raw === "timeout") {
 			await ring(this.transport, ping, this.profile.submitSequence);
-			raw = await this.waitForOutbox(0, readyTimeoutMs);
+			raw = await this.waitForOutbox(0, readyTimeoutMs, false);
 		}
 		if (raw === "timeout" || raw === "crashed") {
 			await this.dispose();
@@ -155,6 +158,7 @@ class InteractiveSessionImpl implements InteractiveSession {
 	private async waitForOutbox(
 		turn: number,
 		timeoutMs: number,
+		checkCrash = true,
 	): Promise<unknown> {
 		const deadline = Date.now() + timeoutMs;
 		let nextCrashCheck = Date.now() + this.deps.crashPollMs;
@@ -163,7 +167,7 @@ class InteractiveSessionImpl implements InteractiveSession {
 			if (this.closedByTerminal) {
 				return "crashed";
 			}
-			if (Date.now() >= nextCrashCheck) {
+			if (checkCrash && Date.now() >= nextCrashCheck) {
 				const pid = await this.transport.processId();
 				if (
 					pid !== undefined &&
@@ -223,6 +227,7 @@ class InteractiveSessionImpl implements InteractiveSession {
 		const harvested: HarvestResult = await harvestSession(
 			this.profile,
 			this.opts.configDir,
+			this.startedAtMs,
 		).catch(() => ({}));
 		if (this._sessionId === undefined && harvested.sessionId) {
 			this._sessionId = harvested.sessionId;

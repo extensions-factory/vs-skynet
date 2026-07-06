@@ -168,6 +168,29 @@ describe("InteractiveSession", () => {
 		expect(transport.calls.some((c) => c.method === "dispose")).toBe(true);
 	}, 10_000);
 
+	test("readiness does not run crash detection before turn-0 resolves", async () => {
+		const cwd = await mkTmpRepo();
+		const transport = new FakeTerminalTransport();
+		let checks = 0;
+		const startPromise = startInteractive(
+			fakeProfile(),
+			{ cwd, workerId: "w4b", readyTimeoutMs: 500, turnTimeoutMs: 500 },
+			{
+				...fastDeps(transport),
+				checkAlive: async () => {
+					checks += 1;
+					return false;
+				},
+				crashPollMs: 10,
+			},
+		);
+		writeOutbox(cwd, "w4b", 0, { status: "paused", summary: "ready" }, 80);
+		const session = await startPromise;
+
+		expect(checks).toBe(0);
+		await session.dispose();
+	}, 10_000);
+
 	test("timeout when a real turn never writes its outbox", async () => {
 		const cwd = await mkTmpRepo();
 		const transport = new FakeTerminalTransport();
