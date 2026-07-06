@@ -224,12 +224,12 @@
       <h2>Session lifecycle</h2>
       <div class="grid">
         <div class="item" data-status="open">
-          <span class="t">Coarse live status</span>
+          <a href="docs/superpowers/specs/2026-07-06-session-lifecycle-design.md" class="t">Coarse live status</a>
           <div class="d">Show launching/ready/busy/awaiting-input/done from the mailbox lifecycle.</div>
           <span class="badge open">Open</span>
         </div>
         <div class="item" data-status="open">
-          <span class="t">Awaiting-input notification</span>
+          <a href="docs/superpowers/specs/2026-07-06-session-lifecycle-design.md" class="t">Awaiting-input notification</a>
           <div class="d">Notify when an agent is parked waiting on the user.</div>
           <span class="badge open">Open</span>
         </div>
@@ -685,9 +685,7 @@
   const emptyNote = document.getElementById('emptyNote');
 
   function apply(status){
-    items.forEach(i => {
-      i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status);
-    });
+    items.forEach(i => i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status));
     let anyVisible = false;
     sections.forEach(s => {
       const visible = s.querySelectorAll('.item:not(.hide)').length > 0;
@@ -697,15 +695,11 @@
     emptyNote.classList.toggle('hide', anyVisible);
   }
 
-  chips.forEach(chip => {
-    chip.addEventListener('click', () => {
-      chips.forEach(c => {
-        c.classList.remove('active');
-      });
-      chip.classList.add('active');
-      apply(chip.dataset.status);
-    });
-  });
+  chips.forEach(chip => chip.addEventListener('click', () => {
+    chips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    apply(chip.dataset.status);
+  }));
 </script>
 </body>
 </html>

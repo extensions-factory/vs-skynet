@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Lifecycle Tracking — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Session Lifecycle Tracking <span class="mut">— Design</span></h1>
+  <p class="sub">E1 · F1.2 · make an interactive session's lifecycle explicit and observable.</p>
+  <div class="tags">
+    <span class="tag">2026-07-06</span>
+    <span class="tag">US1.2.1 coarse status</span>
+    <span class="tag">US1.2.2 awaiting-input notify</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>A developer supervising an agent should know its coarse status
+     (<code>launching / ready / busy / awaiting-input / done / failed / stopped</code>) without reading terminal
+     scrollback, and get a notification the moment an agent parks waiting on their input.</p>
+  <p>Today <code>InteractiveSessionImpl</code> tracks lifecycle with ad-hoc booleans (<code>turn</code>,
+     <code>closed</code>, <code>closedByTerminal</code>) and emits no status. ARCHITECTURE.md (line 103) prescribes an
+     explicit <code>AgentSessionStateMachine</code> transition table so legal lifecycles are declared in one place and
+     inference bugs become loud "illegal transition" errors instead of silent board corruption. This spec builds that
+     machine and wires it in.</p>
+  <div class="note">Keystroke-level "thinking right now" status stays <b>deferred</b> (needs output streaming via
+     node-pty); coarse status is derived purely from the existing mailbox/turn lifecycle.</div>
+
+  <h2>Scope</h2>
+  <ul>
+    <li><b>In:</b> pure <code>AgentSessionStateMachine</code> unit; new <code>status</code> <code>WorkerEvent</code> +
+        sync <code>status</code> getter on <code>InteractiveSession</code>; rewire <code>InteractiveSessionImpl</code>;
+        edge notifier unit for awaiting-input.</li>
+    <li><b>Out:</b> the command-palette wiring that starts a session and subscribes the notifier (no start command
+        exists yet — <code>extension.ts</code> is still boilerplate). The notifier ships as a testable edge unit; real
+        wiring lands with the F1.1/F1.3 start command. Reply-from-notification is F1.3.</li>
+  </ul>
+
+  <h2>Architecture</h2>
+  <p>A <b>pure state-machine unit</b> (no <code>vscode</code>, no I/O) owned by <code>InteractiveSessionImpl</code>,
+     which fires transition events at each existing lifecycle point. Status surfaces two ways from one source of truth:
+     a sync getter for at-a-glance reads, and a <code>status</code> <code>WorkerEvent</code> auto-emitted on every
+     transition for reactive consumers.</p>
+  <div class="note warn">Rejected: an inline <code>status</code> field (violates the explicit-machine rule; no
+     illegal-transition detection; untestable without a full session harness) and a free reducer function (no natural
+     home for the on-change hook and terminal-absorb logic).</div>
+
+  <h3>Unit: <code>session-state-machine.ts</code></h3>
+<pre>export type SessionStatus =
+  | "launching" | "ready" | "busy" | "awaiting-input"
+  | "done" | "failed" | "stopped";
+
+export type SessionEvent =
+  | "readyOutbox" | "startupFailed" | "send"
+  | "paused" | "doneOutbox" | "turnFailed"
+  | "terminalClosed" | "dispose";
+
+export class AgentSessionStateMachine {
+  constructor(onChange?: (from: SessionStatus, to: SessionStatus) => void);
+  get state(): SessionStatus;      // starts at "launching"
+  get isTerminal(): boolean;       // done | failed | stopped
+  transition(event: SessionEvent): void;
+}</pre>
+  <p><code>transition(event)</code>: if <code>isTerminal</code> → <b>return</b> (absorb the done/crash race); else look
+     up <code>table[state][event]</code> — if defined, set state and fire <code>onChange(prev, next)</code>; else
+     <b>throw</b> <code>illegal transition: &lt;state&gt; -/&lt;event&gt;</code>.</p>
+
+  <h3>Transition table</h3>
+  <table>
+    <thead><tr><th>From</th><th>Event</th><th>To</th></tr></thead>
+    <tbody>
+      <tr><td>launching</td><td>readyOutbox</td><td>ready</td></tr>
+      <tr><td>launching</td><td>startupFailed</td><td>failed</td></tr>
+      <tr><td>launching</td><td>dispose</td><td>stopped</td></tr>
+      <tr><td>launching</td><td>terminalClosed</td><td>failed</td></tr>
+      <tr><td>ready</td><td>send</td><td>busy</td></tr>
+      <tr><td>ready</td><td>dispose</td><td>stopped</td></tr>
+      <tr><td>ready</td><td>terminalClosed</td><td>failed</td></tr>
+      <tr><td>busy</td><td>paused</td><td>awaiting-input</td></tr>
+      <tr><td>busy</td><td>doneOutbox</td><td>done</td></tr>
+      <tr><td>busy</td><td>turnFailed</td><td>failed</td></tr>
+      <tr><td>busy</td><td>dispose</td><td>stopped</td></tr>
+      <tr><td>busy</td><td>terminalClosed</td><td>failed</td></tr>
+      <tr><td>awaiting-input</td><td>send</td><td>busy</td></tr>
+      <tr><td>awaiting-input</td><td>dispose</td><td>stopped</td></tr>
+      <tr><td>awaiting-input</td><td>terminalClosed</td><td>failed</td></tr>
+    </tbody>
+  </table>
+  <p><code>done</code> / <code>failed</code> / <code>stopped</code> are absorbing. <code>done</code> is terminal — a
+     completed task ends the session; multi-turn continues only through <code>awaiting-input → send</code>.</p>
+
+  <h3>Surfacing</h3>
+  <ul>
+    <li>New <code>WorkerEvent</code> kind: <code>{ kind: "status"; status: SessionStatus }</code>.</li>
+    <li><code>InteractiveSession</code> gains <code>readonly status: SessionStatus</code> (sync → <code>machine.state</code>).</li>
+    <li>Machine built with <code>onChange: (_, to) =&gt; this.pushEvent({ kind: "status", status: to })</code> — every
+        transition auto-emits into the existing async stream.</li>
+  </ul>
+
+  <h3>Wiring: <code>InteractiveSessionImpl</code></h3>
+  <table>
+    <thead><tr><th>Lifecycle point</th><th>Event</th></tr></thead>
+    <tbody>
+      <tr><td>construct (<code>startInteractive</code>)</td><td>initial <code>launching</code></td></tr>
+      <tr><td><code>ready()</code> success</td><td>readyOutbox</td></tr>
+      <tr><td><code>ready()</code> timeout / crashed</td><td>startupFailed</td></tr>
+      <tr><td><code>send()</code> entry</td><td>send</td></tr>
+      <tr><td><code>afterTurn</code>: paused</td><td>paused (after the <code>message</code> event)</td></tr>
+      <tr><td><code>afterTurn</code>: done</td><td>doneOutbox (after the <code>message</code> event)</td></tr>
+      <tr><td><code>afterTurn</code>: error/timeout/crashed</td><td>turnFailed</td></tr>
+      <tr><td><code>transport.onDidClose</code></td><td>terminalClosed</td></tr>
+      <tr><td><code>dispose()</code></td><td>dispose</td></tr>
+    </tbody>
+  </table>
+  <p><code>send()</code>'s guard becomes <code>if (machine.isTerminal) throw</code>; <code>finish()</code> folds into
+     machine terminality; the async iterator ends when <code>machine.isTerminal</code>. The <code>terminalClosed</code>
+     transition replaces the <code>closedByTerminal</code> boolean.</p>
+
+  <h3>Edge notifier: <code>notify-awaiting-input.ts</code></h3>
+<pre>export function notifyOnAwaitingInput(
+  session: InteractiveSession,
+  label: string, // worker id, for the message text
+  win: Pick&lt;typeof vscode.window, "showInformationMessage"&gt;,
+  reveal: () =&gt; void,
+): Promise&lt;void&gt;;</pre>
+  <p>Iterates <code>session</code>, buffering the most recent <code>message</code> text. On a <code>status</code> event
+     with <code>status === "awaiting-input"</code> shows <code>`${label} is waiting on you: ${lastMessage}`</code> with a
+     <b>"Focus terminal"</b> action that calls <code>reveal()</code>. The worker id isn't on the session, so it's passed
+     as <code>label</code>; the summary is the buffered <code>message</code> text (<code>afterTurn</code> emits
+     <code>message</code> before the <code>paused</code> transition). <code>win</code> and <code>reveal</code> are
+     injected for testability and hold the only <code>vscode</code> dependency at the edge.</p>
+
+  <h2>Error handling</h2>
+  <ul>
+    <li>Illegal transition (non-terminal) → throw; a real inference bug, surfaced loudly.</li>
+    <li>Terminal states absorb all further events, so genuine races never throw.</li>
+    <li>Startup failure → <code>failed</code>; the later <code>dispose</code> event is absorbed, so status stays
+        <code>failed</code>, not overwritten to <code>stopped</code>.</li>
+  </ul>
+
+  <h2>Testing</h2>
+  <ul>
+    <li><code>session-state-machine.test.ts</code> — pure: every legal edge, throw on a sampled illegal edge per
+        non-terminal state, terminal absorption.</li>
+    <li>Extend <code>interactive-session.test.ts</code> — <code>status</code> progression + ordered <code>status</code>
+        events across a full turn (<code>launching → ready → busy → awaiting-input → busy → done</code>), plus crash and
+        startup-timeout paths → <code>failed</code>.</li>
+    <li><code>notify-awaiting-input.test.ts</code> — fake session emits <code>awaiting-input</code>; assert message shown
+        with summary and action invokes <code>reveal</code>.</li>
+  </ul>
+
+  <footer>Skynet · E1 F1.2 Session lifecycle · source of truth is the Markdown spec alongside this file.</footer>
+</div>
+</body>
+</html>

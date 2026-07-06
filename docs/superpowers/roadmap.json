@@ -42,7 +42,7 @@
 		"title": "Coarse live status",
 		"description": "Show launching/ready/busy/awaiting-input/done from the mailbox lifecycle.",
 		"status": "open",
-		"spec": null,
+		"spec": "docs/superpowers/specs/2026-07-06-session-lifecycle-design.md",
 		"plan": null,
 		"created": "2026-07-04",
 		"completed": null
@@ -54,7 +54,7 @@
 		"title": "Awaiting-input notification",
 		"description": "Notify when an agent is parked waiting on the user.",
 		"status": "open",
-		"spec": null,
+		"spec": "docs/superpowers/specs/2026-07-06-session-lifecycle-design.md",
 		"plan": null,
 		"created": "2026-07-04",
 		"completed": null
