@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Lifecycle Tracking — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:38px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 6px;color:var(--pur)}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .files{font-size:13px;color:var(--mut);margin:4px 0 8px}
+  ul.steps{list-style:none;padding-left:0}
+  ul.steps li{margin:8px 0;padding-left:28px;position:relative}
+  ul.steps li::before{content:"\2610";position:absolute;left:2px;top:-1px;color:var(--acc);font-size:16px}
+  .cmd{color:var(--grn)}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Session Lifecycle Tracking <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">E1 · F1.2 · TDD, bite-sized tasks, frequent commits.</p>
+  <div class="tags">
+    <span class="tag">2026-07-06</span>
+    <span class="tag">3 tasks · 2 user stories</span>
+    <span class="tag">TypeScript · vitest · Biome</span>
+  </div>
+
+  <div class="note"><b>For agentic workers:</b> use <code>superpowers:subagent-driven-development</code> (recommended) or
+     <code>superpowers:executing-plans</code>. Spec:
+     <code>docs/superpowers/specs/2026-07-06-session-lifecycle-design.md</code>.</div>
+
+  <p><b>Goal:</b> a coarse <code>status</code> on the session plus an awaiting-input notification, backed by an explicit
+     <code>AgentSessionStateMachine</code>.</p>
+  <p><b>Architecture:</b> pure state-machine unit (no <code>vscode</code>, no I/O) owned by
+     <code>InteractiveSessionImpl</code>, which fires a transition at each existing lifecycle point. Status surfaces from
+     one source: a sync getter + a <code>status</code> <code>WorkerEvent</code>. An edge notifier pops a VSCode message
+     on <code>awaiting-input</code>.</p>
+
+  <h2>Global Constraints</h2>
+  <ul>
+    <li>TypeScript + pnpm only. Tabs for indentation. Colocated <code>*.test.ts</code>. Conventional Commits.</li>
+    <li><code>pnpm run lint</code> (Biome) before each commit; <code>pnpm run test:unit</code> = <code>vitest run</code>.</li>
+    <li>Core state machine imports no <code>vscode</code> and does no I/O; notifier takes an injected window (no
+        <code>vscode</code> import either).</li>
+    <li><code>SessionStatus</code> lives in <code>src/adapters/types.ts</code> — never in <code>interactive/types.ts</code>
+        (avoids a circular type-module import).</li>
+  </ul>
+
+  <h2>US-1: Coarse live status (US1.2.1)</h2>
+  <p class="mut">Read a session's coarse status via a sync <code>session.status</code> getter and ordered
+     <code>status</code> events, backed by the explicit machine.</p>
+
+  <h3>Task 1 — AgentSessionStateMachine pure unit</h3>
+  <p class="files"><b>Modify:</b> <code>src/adapters/types.ts</code> · <b>Create:</b>
+     <code>src/adapters/interactive/session-state-machine.ts</code> · <b>Test:</b>
+     <code>session-state-machine.test.ts</code></p>
+  <p><b>Produces:</b> <code>SessionStatus</code> (adapters/types.ts); <code>SessionEvent</code> +
+     <code>class AgentSessionStateMachine</code> — <code>state</code>, <code>isTerminal</code>, <code>transition()</code>.</p>
+  <ul class="steps">
+    <li>Step 1: add <code>SessionStatus</code> union to <code>src/adapters/types.ts</code>.</li>
+    <li>Step 2: write the failing test (starts-launching, full-lifecycle onChange, illegal-throw, terminal-absorb,
+        dispose/startupFailed).</li>
+    <li>Step 3: <span class="cmd">pnpm exec vitest run …/session-state-machine.test.ts</span> → FAIL (unresolved).</li>
+    <li>Step 4: implement the machine (see below).</li>
+    <li>Step 5: <span class="cmd">pnpm exec vitest run …/session-state-machine.test.ts &amp;&amp; pnpm run lint</span> → PASS.</li>
+    <li>Step 6: commit <code>feat: explicit AgentSessionStateMachine transition table</code>.</li>
+  </ul>
+<pre>import type { SessionStatus } from "../types";
+
+export type SessionEvent =
+	| "readyOutbox" | "startupFailed" | "send"
+	| "turnPaused" | "turnDone" | "turnFailed"
+	| "terminalClosed" | "dispose";
+
+const TERMINAL: ReadonlySet&lt;SessionStatus&gt; = new Set&lt;SessionStatus&gt;([
+	"done", "failed", "stopped",
+]);
+
+const TABLE: Record&lt;SessionStatus, Partial&lt;Record&lt;SessionEvent, SessionStatus&gt;&gt;&gt; = {
+	launching: { readyOutbox: "ready", startupFailed: "failed", dispose: "stopped", terminalClosed: "failed" },
+	ready: { send: "busy", dispose: "stopped", terminalClosed: "failed" },
+	busy: { turnPaused: "awaiting-input", turnDone: "done", turnFailed: "failed", dispose: "stopped", terminalClosed: "failed" },
+	"awaiting-input": { send: "busy", dispose: "stopped", terminalClosed: "failed" },
+	done: {}, failed: {}, stopped: {},
+};
+
+export class AgentSessionStateMachine {
+	private current: SessionStatus = "launching";
+	constructor(private readonly onChange?: (from: SessionStatus, to: SessionStatus) =&gt; void) {}
+	get state(): SessionStatus { return this.current; }
+	get isTerminal(): boolean { return TERMINAL.has(this.current); }
+	transition(event: SessionEvent): void {
+		if (this.isTerminal) return;
+		const next = TABLE[this.current][event];
+		if (next === undefined) throw new Error(`illegal transition: ${this.current} -/${event}`);
+		const prev = this.current;
+		this.current = next;
+		this.onChange?.(prev, next);
+	}
+}</pre>
+
+  <h3>Task 2 — Surface <code>status</code> and drive the machine</h3>
+  <p class="files"><b>Modify:</b> <code>src/adapters/types.ts</code> (add <code>status</code> event) ·
+     <code>interactive/types.ts</code> (add <code>status</code> to interface) ·
+     <code>interactive-session.ts</code> (replace booleans with the machine) · <b>Test:</b> extend
+     <code>interactive-session.test.ts</code>.</p>
+  <ul class="steps">
+    <li>Step 1: add two tests — "status getter and status events track the lifecycle"
+        (<code>ready, busy, awaiting-input, busy, done</code>) and "a crashed turn drives status to failed".</li>
+    <li>Step 2: <span class="cmd">pnpm exec vitest run …/interactive-session.test.ts</span> → FAIL
+        (<code>session.status</code> undefined).</li>
+    <li>Step 3: add <code>{ kind: "status"; status: SessionStatus }</code> to <code>WorkerEvent</code>.</li>
+    <li>Step 4: import <code>SessionStatus</code> into <code>interactive/types.ts</code>; add
+        <code>readonly status: SessionStatus</code> to <code>InteractiveSession</code>.</li>
+    <li>Step 5: wire the machine into <code>InteractiveSessionImpl</code> (fields, getter, ready/send/afterTurn/dispose,
+        <code>onDidClose</code>, iterator, <code>finalizeTerminal</code>) — see below.</li>
+    <li>Step 6: <span class="cmd">pnpm exec vitest run …/interactive-session.test.ts</span> → PASS (new + existing).</li>
+    <li>Step 7: <span class="cmd">pnpm run test:unit &amp;&amp; pnpm run lint</span> → PASS repo-wide.</li>
+    <li>Step 8: commit <code>feat: surface coarse session status via the state machine</code>.</li>
+  </ul>
+<pre>// field: replaces closed / closedByTerminal
+private readonly machine = new AgentSessionStateMachine((_, to) =&gt; {
+	this.pushEvent({ kind: "status", status: to });
+	if (this.machine.isTerminal) this.finalizeTerminal();
+});
+get status(): SessionStatus { return this.machine.state; }
+
+// onDidClose(): this.machine.transition("terminalClosed");
+// sessionId getter / iterator: replace this.closed with this.machine.isTerminal
+// waitForOutbox: replace closedByTerminal check with `this.machine.state === "failed"`
+
+// ready(): failure path first, before dispose()
+this.machine.transition("startupFailed");
+await this.dispose();
+throw new Error(`interactive session not ready: ${String(raw)}`);
+// success:
+await this.harvestInto();
+this.machine.transition("readyOutbox");
+
+// send(): guard + transition
+if (this.machine.isTerminal) throw new Error("session already completed");
+this.machine.transition("send");
+
+// afterTurn(): message BEFORE the turn transition
+if (base.status === "paused" || base.status === "done") this.pushEvent({ kind: "message", text: base.summary });
+if (base.status === "paused") this.machine.transition("turnPaused");
+else if (base.status === "done") this.machine.transition("turnDone");
+else this.machine.transition("turnFailed");
+
+// replaces finish():
+private finalizeTerminal(): void {
+	if (this._sessionId === undefined) this.emitter.emit("sessionId", undefined);
+}
+// dispose(): ... transport.dispose(); this.machine.transition("dispose");</pre>
+
+  <h2>US-2: Awaiting-input notification (US1.2.2)</h2>
+  <p class="mut">Parked agent → VSCode info message + "Focus terminal". Injected-dependency edge unit; real command
+     wiring lands with F1.1/F1.3.</p>
+
+  <h3>Task 3 — <code>notifyOnAwaitingInput</code> edge notifier</h3>
+  <p class="files"><b>Create:</b> <code>src/adapters/interactive/notify-awaiting-input.ts</code> · <b>Test:</b>
+     <code>notify-awaiting-input.test.ts</code></p>
+  <p><b>Produces:</b> <code>interface NotifyWindow</code> (structural, no <code>vscode</code> import) +
+     <code>notifyOnAwaitingInput(session, label, win, reveal)</code>.</p>
+  <ul class="steps">
+    <li>Step 1: write the failing test — shows message with buffered summary + reveals on action; no reveal on dismiss.</li>
+    <li>Step 2: <span class="cmd">pnpm exec vitest run …/notify-awaiting-input.test.ts</span> → FAIL (unresolved).</li>
+    <li>Step 3: implement the notifier (see below).</li>
+    <li>Step 4: <span class="cmd">pnpm exec vitest run …/notify-awaiting-input.test.ts &amp;&amp; pnpm run lint</span> → PASS.</li>
+    <li>Step 5: commit <code>feat: awaiting-input notifier for interactive sessions</code>.</li>
+  </ul>
+<pre>import type { InteractiveSession } from "./types";
+
+export interface NotifyWindow {
+	showInformationMessage(message: string, ...items: string[]): Thenable&lt;string | undefined&gt;;
+}
+const FOCUS_ACTION = "Focus terminal";
+
+export async function notifyOnAwaitingInput(
+	session: InteractiveSession, label: string, win: NotifyWindow, reveal: () =&gt; void,
+): Promise&lt;void&gt; {
+	let lastMessage = "";
+	for await (const event of session) {
+		if (event.kind === "message") lastMessage = event.text;
+		else if (event.kind === "status" &amp;&amp; event.status === "awaiting-input") {
+			const choice = await win.showInformationMessage(`${label} is waiting on you: ${lastMessage}`, FOCUS_ACTION);
+			if (choice === FOCUS_ACTION) reveal();
+		}
+	}
+}</pre>
+
+  <h2>Self-Review</h2>
+  <ul>
+    <li><b>Coverage:</b> machine → T1; getter + event + wiring → T2; notifier → T3. Startup-failure→<code>failed</code>
+        is covered by the T1 machine unit test (no session returned to observe from the session test).</li>
+    <li><b>Deferred:</b> command-palette wiring that starts a session and subscribes the notifier (F1.1/F1.3).</li>
+    <li><b>Type consistency:</b> <code>SessionStatus</code> (adapters/types.ts), <code>SessionEvent</code> (machine),
+        <code>turnPaused/turnDone/turnFailed</code> used identically across table, <code>afterTurn</code>, and tests.</li>
+  </ul>
+
+  <footer>Skynet · E1 F1.2 · source of truth is the Markdown plan alongside this file.</footer>
+</div>
+</body>
+</html>
