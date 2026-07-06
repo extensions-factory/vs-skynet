@@ -65,3 +65,16 @@ export async function sendTaskCommand(
 		await win.showErrorMessage(`Failed to send task: ${detail}`);
 	}
 }
+
+export async function stopAgentCommand(
+	getSession: () => InteractiveSession | undefined,
+	win: HandoffWindow,
+): Promise<void> {
+	const session = getSession();
+	if (!session || TERMINAL.has(session.status)) {
+		await win.showInformationMessage("No running agent to stop.");
+		return;
+	}
+	await session.dispose();
+	await win.showInformationMessage("Agent stopped.");
+}

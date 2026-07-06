@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type { SessionStatus } from "../types";
-import { sendTaskCommand } from "./task-handoff";
+import { sendTaskCommand, stopAgentCommand } from "./task-handoff";
 import type { InteractiveSession, TurnResult } from "./types";
 
 function fakeSession(
@@ -128,6 +128,44 @@ describe("sendTaskCommand", () => {
 		await expect(sendTaskCommand(() => session, win)).resolves.toBeUndefined();
 		expect(win.showErrorMessage).toHaveBeenCalledWith(
 			"Failed to send task: illegal transition: busy -/send",
+		);
+	});
+});
+
+describe("stopAgentCommand", () => {
+	test("disposes a non-terminal session and confirms", async () => {
+		const { session } = fakeSession("busy");
+		const win = fakeWindow();
+		await stopAgentCommand(() => session, win);
+		expect(session.dispose).toHaveBeenCalledTimes(1);
+		expect(win.showInformationMessage).toHaveBeenCalledWith("Agent stopped.");
+	});
+
+	test.each([
+		"ready",
+		"awaiting-input",
+		"launching",
+	] as const)("disposes a %s session", async (status) => {
+		const { session } = fakeSession(status);
+		await stopAgentCommand(() => session, fakeWindow());
+		expect(session.dispose).toHaveBeenCalledTimes(1);
+	});
+
+	test("reports nothing to stop when there is no session", async () => {
+		const win = fakeWindow();
+		await stopAgentCommand(() => undefined, win);
+		expect(win.showInformationMessage).toHaveBeenCalledWith(
+			"No running agent to stop.",
+		);
+	});
+
+	test("does not dispose an already-terminal session", async () => {
+		const { session } = fakeSession("stopped");
+		const win = fakeWindow();
+		await stopAgentCommand(() => session, win);
+		expect(session.dispose).not.toHaveBeenCalled();
+		expect(win.showInformationMessage).toHaveBeenCalledWith(
+			"No running agent to stop.",
 		);
 	});
 });
