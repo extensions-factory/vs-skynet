@@ -2,6 +2,15 @@ import type { InteractiveOpts, InteractiveSession } from "./interactive/types";
 
 export type ErrorClass = "limit" | "transport" | "terminal";
 
+export type SessionStatus =
+	| "launching"
+	| "ready"
+	| "busy"
+	| "awaiting-input"
+	| "done"
+	| "failed"
+	| "stopped";
+
 export type WorkerEvent =
 	| { kind: "started"; sessionId: string; model?: string }
 	| { kind: "message"; text: string }
