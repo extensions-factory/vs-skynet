@@ -1,4 +1,9 @@
-import type { ErrorClass, WorkerEvent, WorkerUsage } from "../types";
+import type {
+	ErrorClass,
+	SessionStatus,
+	WorkerEvent,
+	WorkerUsage,
+} from "../types";
 
 export interface InteractiveOpts {
 	cwd: string;
@@ -24,6 +29,7 @@ export type TurnResult =
 
 export interface InteractiveSession extends AsyncIterable<WorkerEvent> {
 	send(prompt: string): Promise<TurnResult>;
+	readonly status: SessionStatus;
 	readonly sessionId: Promise<string | undefined>;
 	dispose(): Promise<void>;
 }

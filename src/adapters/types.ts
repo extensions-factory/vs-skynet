@@ -17,6 +17,7 @@ export type WorkerEvent =
 	| { kind: "thinking"; text: string }
 	| { kind: "tool_call"; name: string; input: unknown }
 	| ({ kind: "usage" } & WorkerUsage)
+	| { kind: "status"; status: SessionStatus }
 	| { kind: "unknown"; raw: unknown };
 
 export interface WorkerUsage {

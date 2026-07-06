@@ -124,6 +124,68 @@ describe("InteractiveSession", () => {
 		await expect(session.send("turn 2")).rejects.toThrow(/already completed/);
 	});
 
+	test("status getter and status events track the lifecycle", async () => {
+		const cwd = await mkTmpRepo();
+		const transport = new FakeTerminalTransport();
+		const profile = fakeProfile({
+			sessionDir: () => cwd,
+			harvest: () => ({ sessionId: "sess-1" }),
+		});
+
+		const startPromise = startInteractive(
+			profile,
+			{ cwd, workerId: "s1", readyTimeoutMs: 2_000, turnTimeoutMs: 2_000 },
+			fastDeps(transport),
+		);
+		writeOutbox(cwd, "s1", 0, { status: "paused", summary: "ready" }, 30);
+		const session = await startPromise;
+		expect(session.status).toBe("ready");
+
+		writeOutbox(cwd, "s1", 1, { status: "paused", summary: "step 1" }, 30);
+		await session.send("turn 1");
+		expect(session.status).toBe("awaiting-input");
+
+		writeOutbox(cwd, "s1", 2, { status: "done", summary: "fin" }, 30);
+		await session.send("turn 2");
+		expect(session.status).toBe("done");
+
+		const statuses: string[] = [];
+		for await (const event of session) {
+			if (event.kind === "status") {
+				statuses.push(event.status);
+			}
+		}
+		expect(statuses).toEqual([
+			"ready",
+			"busy",
+			"awaiting-input",
+			"busy",
+			"done",
+		]);
+		await session.dispose();
+	});
+
+	test("a crashed turn drives status to failed", async () => {
+		const cwd = await mkTmpRepo();
+		const transport = new FakeTerminalTransport();
+		const startPromise = startInteractive(
+			fakeProfile(),
+			{ cwd, workerId: "s2", readyTimeoutMs: 2_000, turnTimeoutMs: 2_000 },
+			{
+				...fastDeps(transport),
+				checkAlive: async () => false,
+				crashPollMs: 50,
+			},
+		);
+		writeOutbox(cwd, "s2", 0, { status: "paused", summary: "ready" }, 20);
+		const session = await startPromise;
+
+		const result = await session.send("will crash");
+		expect(result.status).toBe("crashed");
+		expect(session.status).toBe("failed");
+		await session.dispose();
+	});
+
 	test("a real turn slower than readyTimeoutMs is NOT re-pinged (no duplicate execution)", async () => {
 		const cwd = await mkTmpRepo();
 		const transport = new FakeTerminalTransport();
