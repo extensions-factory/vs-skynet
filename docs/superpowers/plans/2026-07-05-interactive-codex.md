@@ -13,7 +13,7 @@
 After all tasks land, you have **`codexAdapter.runInteractive(opts)`**: it drives a real `codex` TUI inside a VSCode terminal through a file mailbox — multi-turn steering with pause/resume in one live session.
 
 **What exists (by directory):**
-- `src/adapters/` — shared `types.ts` (worker events/usage/result, `AgentAdapter`) + pure `classifyError`.
+- `src/adapters/` — shared `types.ts` (worker events/usage/result; `AgentAdapter` added in Task 9) + pure `classifyError`.
 - `src/adapters/interactive/` — the CLI-agnostic core: `mailbox` (inbox/outbox + `protocol.md` + gitignore), `doorbell` (paste + submit key), `process-watch` (crash detection), `session-harvester` (newest rollout), `interactive-session` (the state machine), `config.ts` (**central** prompt strings + timing defaults), `vscode-terminal-transport`.
 - `src/adapters/codex/` — `interactive-profile` (launch argv, keymap overrides, rollout JSONL parser) + `codexAdapter`.
 
@@ -52,6 +52,8 @@ After all tasks land, you have **`codexAdapter.runInteractive(opts)`**: it drive
 ## US-0: Shared adapter foundation (prerequisite)
 
 The interactive core imports shared types and a pure error classifier from `src/adapters/`. `active/` has neither yet. This US creates the minimal set the interactive code consumes — nothing more (no one-shot `run()`/`RunOpts`/`WorkerRun`; those belong to a headless path the constitution forbids).
+
+> **Spec deviation.** The spec's Prerequisites (§ line 28) list `RunOpts`, `WorkerRun`, and `AgentAdapter` in `types.ts`. `RunOpts`/`WorkerRun` are **intentionally omitted** — they serve the headless `codex exec --json` path the constitution forbids. `AgentAdapter` is **deferred to Task 9**, where its only consumer (`codexAdapter`) is created; adding it in US-0 would be a dangling type.
 
 ### Task 0.1: Shared types + error classifier
 
@@ -1283,6 +1285,10 @@ export class VscodeTerminalTransport implements TerminalTransport {
   }
 
   async sendSequence(sequence: string): Promise<void> {
+    // ponytail: `sendSequence` targets the *active* terminal, not `this.terminal`.
+    // The doorbell always calls show(false) first, so in practice this terminal is
+    // focused — but another extension could steal focus in the gap. Acceptable for
+    // v1's single-agent-per-window use; revisit if multi-terminal races appear.
     await vscode.commands.executeCommand("workbench.action.terminal.sendSequence", { text: sequence });
   }
 
@@ -1418,6 +1424,9 @@ describe("InteractiveSession", () => {
 
     expect(await session.sessionId).toBe("sess-1");
 
+    // Iterating after both send()s works because events are buffered internally
+    // (this.buffered); the async iterator drains the buffer before it checks the
+    // closed flag, so nothing emitted mid-turn is lost to a late subscriber.
     const events: unknown[] = [];
     for await (const event of session) {
       events.push(event);

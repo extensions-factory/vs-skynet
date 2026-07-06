@@ -56,7 +56,7 @@
   <h2>Output — what this delivers</h2>
   <p>After all tasks land: <code>codexAdapter.runInteractive(opts)</code> drives a real <code>codex</code> TUI in a VSCode terminal through a file mailbox — multi-turn steering with pause/resume in one live session.</p>
   <ul>
-    <li><b><code>src/adapters/</code></b> — shared <code>types.ts</code> (worker events/usage/result, <code>AgentAdapter</code>) + pure <code>classifyError</code>.</li>
+    <li><b><code>src/adapters/</code></b> — shared <code>types.ts</code> (worker events/usage/result; <code>AgentAdapter</code> added in Task 9) + pure <code>classifyError</code>.</li>
     <li><b><code>src/adapters/interactive/</code></b> — CLI-agnostic core: mailbox, doorbell, crash-watch, session-harvester, <code>interactive-session</code> state machine, <code>config.ts</code> (<b>central</b> prompt strings + timing defaults), vscode terminal transport.</li>
     <li><b><code>src/adapters/codex/</code></b> — codex profile (launch argv, rollout parser) + <code>codexAdapter</code>.</li>
   </ul>
@@ -80,7 +80,7 @@
   </ul>
 
   <h2>US-0 · Shared adapter foundation (prerequisite)</h2>
-  <p class="mut">Minimal types + classifier the interactive core imports. No headless <code>run()</code>/<code>RunOpts</code>/<code>WorkerRun</code> (pty-only).</p>
+  <p class="mut">Minimal types + classifier the interactive core imports. <b>Spec deviation:</b> no headless <code>run()</code>/<code>RunOpts</code>/<code>WorkerRun</code> (pty-only); <code>AgentAdapter</code> deferred to Task 9 (created with its only consumer).</p>
   <div class="card">
     <h3>Task 0.1 · Shared types + error classifier</h3>
     <p class="files"><b>Modify:</b> <code>tsconfig.json</code> · <b>Create:</b> <code>src/adapters/types.ts</code>, <code>src/adapters/classify.ts</code> · <b>Test:</b> <code>src/adapters/classify.test.ts</code></p>
