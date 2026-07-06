@@ -81,7 +81,12 @@ export const codexInteractive: InteractiveCliProfile = {
 		"-c",
 		'tui.keymap.composer.queue="ctrl-q"',
 	],
-	configEnv: (dir) => (dir ? { CODEX_HOME: dir } : {}),
+	configEnv: (dir): Record<string, string> => {
+		if (!dir) {
+			return {};
+		}
+		return { CODEX_HOME: dir };
+	},
 	submitSequence: "\t",
 	sessionDir: (dir) =>
 		dir
