@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start Agent + Codex Preflight — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Start Agent + Codex Preflight <span class="mut">— Design</span></h1>
+  <p class="sub">E1 · F1.1 · one command to launch a codex session, gated by an install/sign-in preflight.</p>
+  <div class="tags">
+    <span class="tag">2026-07-07</span>
+    <span class="tag">US-1 start in one command</span>
+    <span class="tag">US-2 detect missing / signed-out CLI</span>
+    <span class="tag">MVP / v0.1</span>
+  </div>
+
+  <h2>Overview</h2>
+  <p>The interactive codex adapter is built and <b>released</b> — it can drive a codex TUI, harvest usage, and expose
+     <code>send()</code>/<code>dispose()</code>. What is missing is a way to <i>start</i> one. The command palette has
+     <code>Send Task</code> and <code>Stop Agent</code>, but nothing calls <code>setActiveSession</code>, so both always
+     report "No running agent."</p>
+  <div class="note good"><b>This feature is the first caller of the released adapter.</b> It adds
+     <code>Skynet: Start Agent</code> — one command that launches a codex session in a terminal and registers it as the
+     active session — gated by a preflight that confirms codex is installed and signed in, with a clear fix when it is not.
+     No adapter code changes.</div>
+
+  <h2>Context &amp; Assumptions</h2>
+  <ul>
+    <li>The adapter layer is released: <code>codexAdapter.runInteractive(opts)</code> returns an
+        <code>InteractiveSession</code>; readiness (turn-0) runs <i>inside</i> it.</li>
+    <li><b>Requires an isolated <code>CODEX_HOME</code>.</b> The adapter reads
+        <code>opts.configDir ?? process.env.CODEX_HOME</code> and throws if neither is set. A real run needs a dedicated
+        home, not the global account.</li>
+    <li><b>A1 — single active session (MVP).</b> Parallel agents are E2. If a session is active, Start Agent refuses.</li>
+    <li><b>A2 — login-status surface (probed, <code>codex-cli 0.142.5</code>).</b> <code>codex login status</code> exits
+        <code>0</code> either way; the states are told apart by stdout (<code>Logged in using ChatGPT</code> vs
+        <code>Not logged in</code>). <code>codex --version</code> fails to spawn when codex is off <code>PATH</code>.</li>
+    <li><b>A3 — preflight is a diagnostic, not orchestration.</b> Child-process <code>--version</code>/<code>login status</code>
+        do not violate the pty-only rule; <code>CONSTITUTION.md</code> §CLI-integration <i>requires</i> confirming
+        installed + signed-in before use.</li>
+    <li><b>A4 — the "one turn result" skeleton is already covered</b> by F1.3's <code>Send Task</code>; Start Agent only
+        launches and reaches readiness.</li>
+  </ul>
+
+  <h2>Scope</h2>
+  <h3>Goals</h3>
+  <ul>
+    <li>A <code>Skynet: Start Agent</code> command that launches a codex session and registers it — no per-run prompts.</li>
+    <li>A preflight that detects not-installed / not-signed-in <b>before</b> opening a terminal, with an actionable fix.</li>
+    <li>Config via settings (<code>skynet.codex.home</code>, <code>.model</code>, <code>.sandbox</code>) with silent defaults.</li>
+  </ul>
+  <h3>Non-Goals</h3>
+  <ul>
+    <li>No standalone <code>Check Codex</code> command — preflight lives inside Start Agent.</li>
+    <li>No session replace / multi-session / fleet (E2). No model/sandbox quick-pick. No adapter changes.</li>
+    <li>No automated recovery, no Windows-specific preflight tuning.</li>
+  </ul>
+
+  <h2>User Stories</h2>
+  <h3>US-1 — Start an agent in one command <span class="mut">(P1)</span></h3>
+  <p>As a developer, I want to start a coding agent in a VSCode terminal with one command, so that I can begin without any
+     per-run setup.</p>
+  <ul>
+    <li><b>GIVEN</b> codex installed + signed in, a folder open, a home configured, <b>WHEN</b> I run Start Agent,
+        <b>THEN</b> a session launches, becomes active (<code>setActiveSession</code>), and the terminal is revealed.</li>
+    <li><b>GIVEN</b> a session is already active, <b>WHEN</b> I run Start Agent, <b>THEN</b> it refuses and launches
+        nothing.</li>
+    <li><b>GIVEN</b> no folder open / no home configured, <b>WHEN</b> I run Start Agent, <b>THEN</b> it aborts with a
+        fix-it message and no terminal opens.</li>
+  </ul>
+  <h3>US-2 — Detect a missing or signed-out CLI <span class="mut">(P1)</span></h3>
+  <p>As a developer, I want Skynet to tell me when codex is not installed or not signed in, so that I know how to fix it
+     instead of staring at a broken terminal.</p>
+  <ul>
+    <li><b>GIVEN</b> codex off <code>PATH</code>, <b>THEN</b> preflight reports "not installed" with a hint;
+        <code>runInteractive</code> is never called.</li>
+    <li><b>GIVEN</b> <code>login status</code> reports <code>Not logged in</code>, <b>THEN</b> preflight reports "not
+        signed in" with <code>Run: codex login</code>; <code>runInteractive</code> is never called.</li>
+    <li><b>GIVEN</b> <code>login status</code> reports <code>Logged in</code>, <b>THEN</b> preflight returns ok with the
+        parsed version and launch proceeds.</li>
+  </ul>
+
+  <h2>Approach</h2>
+  <p>Two small, pure, dependency-injected units wired in the composition root — the same shape as the repo's
+     <code>task-handoff.ts</code> / <code>notify-awaiting-input.ts</code> (no <code>vscode</code> in the logic; the root
+     injects window, config, adapter, and a child-process runner). <code>preflight.ts</code> takes an injected
+     <code>run</code> so it is testable with no real spawn; <code>start-agent.ts</code> takes a <code>deps</code> bag so it
+     is testable with no real terminal. The preflight <b>parses stdout</b> (both states exit <code>0</code>). Config
+     resolves <code>skynet.codex.home</code> → <code>CODEX_HOME</code> → error.</p>
+  <table>
+    <tr><th>Alternative</th><th>Why rejected</th></tr>
+    <tr><td>Env-var-only home</td><td>Forces launching VSCode with the env set; a setting is discoverable and still falls back to env.</td></tr>
+    <tr><td>Prompt / quick-pick a home on start</td><td>UI for a first-run step a one-time setting covers; breaks "one command."</td></tr>
+    <tr><td>Quick-pick model/sandbox each start</td><td>Breaks the one-command promise; silent settings defaults are truer to US-1.</td></tr>
+    <tr><td>Standalone <code>Check Codex</code> command</td><td>Speculative; the in-start preflight already satisfies US-2.</td></tr>
+    <tr><td>Rely on <code>login status</code> exit code</td><td>Probe showed exit <code>0</code> both ways; must parse stdout.</td></tr>
+  </table>
+
+  <h2>Design</h2>
+  <h3>Architecture</h3>
+<pre>extension.ts (composition root)
+  registers "skynet.startAgent"
+  injects: getConfig, getWorkspaceCwd, checkCodex (bound to real execFile runner),
+           runInteractive, setActiveSession, getActiveSession, window, genWorkerId
+        │
+        ▼
+start-agent.ts  startAgentCommand(deps)
+  1. active session already set?     → refuse, return
+  2. resolve cwd                      → none → error, return
+  3. resolve codexHome (setting→env)  → none → error, return
+  4. checkCodex(codexHome)            → not ok → show fix, return   ◄─ no terminal yet
+  5. build InteractiveOpts from settings
+  6. runInteractive(opts) → session
+  7. setActiveSession(session); reveal terminal
+        │
+        ▼
+preflight.ts  checkCodex(run, codexHome): Promise&lt;PreflightResult&gt;
+  run("codex", ["--version"])                    spawn fail → not-installed
+  run("codex", ["login","status"], {CODEX_HOME}) stdout has "Not logged in" → not-signed-in
+                                                  else → ok(version)</pre>
+
+  <h3>Components &amp; Interfaces</h3>
+  <p><b><code>src/adapters/codex/preflight.ts</code></b> — injected
+     <code>Run = (cmd, args, env?) =&gt; Promise&lt;{code,stdout,stderr}&gt;</code>;
+     <code>checkCodex(run, codexHome)</code> → <code>{ ok:true, version } | { ok:false, reason:"not-installed"|"not-signed-in", message }</code>.
+     No <code>vscode</code>, no <code>child_process</code> import.</p>
+  <p><b><code>src/commands/start-agent.ts</code></b> — <code>startAgentCommand(deps)</code>; deps =
+     <code>{ getActiveSession, setActiveSession, getWorkspaceCwd, getConfig, checkCodex, runInteractive, genWorkerId, window }</code>.
+     Structural <code>window</code> only (mirrors <code>HandoffWindow</code>). Terminal reveal is delegated to the
+     adapter's Doorbell.</p>
+  <p><b><code>src/extension.ts</code></b> — a real <code>Run</code> over <code>node:child_process</code>
+     <code>execFile</code> (ENOENT → non-spawn result the preflight reads as not-installed); registers
+     <code>skynet.startAgent</code>; generates <code>workerId</code> (<code>codex-&lt;short-unique&gt;</code>).</p>
+  <p><b><code>package.json</code></b> — command <code>skynet.startAgent</code> ("Start Agent", Skynet); settings
+     <code>skynet.codex.home</code>, <code>.model</code>, <code>.sandbox</code> (enum, default
+     <code>workspace-write</code>); activation <code>onCommand:skynet.startAgent</code>.</p>
+
+  <h3>Config → InteractiveOpts</h3>
+<pre>{ cwd:       getWorkspaceCwd(),
+  workerId:  genWorkerId(),
+  configDir: home,                       // setting → env; required
+  model:     config.model || undefined,  // omit → codex default
+  sandbox:   config.sandbox ?? "workspace-write" }</pre>
+
+  <h3>Error handling &amp; edge cases</h3>
+  <ul>
+    <li>Already active / no workspace / no home / preflight-fail → distinct <code>showErrorMessage</code>, return before
+        any terminal opens and before <code>runInteractive</code>.</li>
+    <li><code>runInteractive</code> throws (e.g. readiness timeout) → catch, show error, leave active session unset.</li>
+    <li><code>login status</code> in an unexpected format → absence of <code>Not logged in</code> is treated as ok
+        (fail-open; the adapter's readiness turn-0 catches a truly broken session as a timeout).</li>
+    <li>Empty/whitespace <code>skynet.codex.home</code> → treated as unset → env fallback.</li>
+  </ul>
+
+  <h2>Testing Strategy</h2>
+  <p>All vitest, colocated, injected deps — no real spawn, no real terminal (matches <code>task-handoff.test.ts</code>).</p>
+  <table>
+    <tr><th>Test</th><th>Asserts</th><th>Story</th></tr>
+    <tr><td>preflight: not-installed</td><td><code>run</code> throws/ENOENT on <code>--version</code> → not-installed + install hint</td><td>US-2</td></tr>
+    <tr><td>preflight: not-signed-in</td><td><code>login status</code> = captured <code>Not logged in</code> → not-signed-in + <code>Run: codex login</code></td><td>US-2</td></tr>
+    <tr><td>preflight: ok</td><td><code>--version</code>=<code>codex-cli 0.142.5</code>, status=<code>Logged in…</code> → ok(version)</td><td>US-2</td></tr>
+    <tr><td>start: happy path</td><td>preflight ok → <code>runInteractive</code> with opts from config, <code>setActiveSession</code> called</td><td>US-1</td></tr>
+    <tr><td>start: already active</td><td>error shown, <code>runInteractive</code> not called</td><td>US-1</td></tr>
+    <tr><td>start: no workspace</td><td>error shown, <code>runInteractive</code> not called</td><td>US-1</td></tr>
+    <tr><td>start: no home</td><td>error shown, <code>runInteractive</code> not called</td><td>US-1</td></tr>
+    <tr><td>start: preflight fail</td><td>message shown, <code>runInteractive</code> &amp; <code>setActiveSession</code> not called</td><td>US-2</td></tr>
+  </table>
+  <p>The two <code>login status</code> outputs are captured as fixtures from the real <code>codex-cli 0.142.5</code> probe
+     so an upstream wording change breaks a test, not a user.</p>
+
+  <h2>Success Criteria</h2>
+  <ul>
+    <li><b>SC-1:</b> With codex installed/signed-in, a folder open, a home configured, one Start Agent yields a running
+        active session that <code>Send Task</code> can drive — no per-run prompts.</li>
+    <li><b>SC-2:</b> Each failure class (not installed / not signed in / no home / no folder) gives a distinct actionable
+        message and <b>never opens a terminal or calls <code>runInteractive</code></b>.</li>
+    <li><b>SC-3:</b> All units covered by injected-dependency unit tests under <code>pnpm run test:unit</code>; no real
+        codex install or terminal required.</li>
+    <li><b>SC-4:</b> No new provider-SDK/API dependency, no adapter change; the preflight is the only new child-process
+        use, confined to install/auth diagnostics.</li>
+  </ul>
+
+  <footer>Skynet · E1 F1.1 Start Agent + Codex Preflight · source of truth is the Markdown spec alongside this file · 2026-07-07.</footer>
+</div>
+</body>
+</html>
