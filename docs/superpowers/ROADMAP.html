@@ -242,15 +242,15 @@
       <p class="eyebrow">Single agent session</p>
       <h2>Task hand-off</h2>
       <div class="grid">
-        <div class="item" data-status="open">
+        <div class="item" data-status="released">
           <a href="docs/superpowers/specs/2026-07-06-task-handoff-design.md" class="t">Send a task to the running agent</a>
           <div class="d">Hand a task/prompt to the running agent via the send() channel; the command palette is the MVP trigger, the Orchestrator drives the same seam later.</div>
-          <span class="badge open">Open</span>
+          <span class="badge released">Released</span>
         </div>
-        <div class="item" data-status="open">
+        <div class="item" data-status="released">
           <a href="docs/superpowers/specs/2026-07-06-task-handoff-design.md" class="t">Stop an agent</a>
           <div class="d">Stop any agent at any time (dispose the session) to stay in control.</div>
-          <span class="badge open">Open</span>
+          <span class="badge released">Released</span>
         </div>
       </div>
     </div>
@@ -685,7 +685,9 @@
   const emptyNote = document.getElementById('emptyNote');
 
   function apply(status){
-    items.forEach(i => i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status));
+    items.forEach(i => {
+      i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status);
+    });
     let anyVisible = false;
     sections.forEach(s => {
       const visible = s.querySelectorAll('.item:not(.hide)').length > 0;
@@ -695,11 +697,15 @@
     emptyNote.classList.toggle('hide', anyVisible);
   }
 
-  chips.forEach(chip => chip.addEventListener('click', () => {
-    chips.forEach(c => c.classList.remove('active'));
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chips.forEach(c => {
+        c.classList.remove('active');
+      });
     chip.classList.add('active');
     apply(chip.dataset.status);
-  }));
+    });
+  });
 </script>
 </body>
 </html>

@@ -14,4 +14,6 @@ export const window = {
 	})),
 	onDidCloseTerminal: vi.fn(() => ({ dispose: vi.fn() })),
 	showInformationMessage: vi.fn(),
+	showInputBox: vi.fn(),
+	showErrorMessage: vi.fn(),
 };
