@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start Agent + Codex Preflight — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.good{border-left-color:var(--grn)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0}
+  .card h3{margin-top:4px}
+  .dep{font-size:12px;color:var(--mut)}
+  .files{font-size:13px;color:var(--mut);margin:6px 0}
+  .files b{color:var(--tx)}
+  ul.steps{list-style:none;padding-left:0;margin:10px 0 0}
+  ul.steps li{margin:4px 0;padding-left:26px;position:relative}
+  ul.steps li::before{content:"☐";position:absolute;left:0;color:var(--mut)}
+  .chk{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--grn);
+    border-radius:8px;padding:10px 16px;margin:14px 0;font-size:13.5px}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Start Agent + Codex Preflight <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">E1 · F1.1 · one command to launch a codex session, gated by an install/sign-in preflight.</p>
+  <div class="tags">
+    <span class="tag">2026-07-07</span>
+    <span class="tag">Foundation + US-1 + US-2</span>
+    <span class="tag">4 tasks · TDD</span>
+  </div>
+
+  <div class="note"><b>Spec:</b> <code>docs/superpowers/specs/2026-07-07-start-agent-design.md</code>.
+     Source of truth is the Markdown plan alongside this file.</div>
+
+  <h2>Overview</h2>
+  <p><b>Goal:</b> add a <code>Skynet: Start Agent</code> command that launches a codex interactive session as the active
+     session, gated by a preflight that confirms codex is installed and signed in.</p>
+  <div class="note good"><b>Two pure, dependency-injected units.</b> <code>preflight.ts</code>
+     (<code>checkCodex(run, codexHome)</code>, injected child-process runner) and <code>start-agent.ts</code>
+     (<code>startAgentCommand(deps)</code>, injected window/config/adapter/accessors) — mirroring the released
+     <code>task-handoff.ts</code>. <code>extension.ts</code> supplies the real <code>execFile</code> runner, VSCode
+     config, <code>codexAdapter.runInteractive</code>, and <code>setActiveSession</code>. No adapter code changes.</div>
+
+  <h2>Expected Outcome</h2>
+  <h3>Working behavior</h3>
+  <ul>
+    <li><b>US-1:</b> run <code>Skynet: Start Agent</code> once → a codex session launches in a terminal and becomes the
+        active session that <code>Send Task</code> / <code>Stop Agent</code> operate on — no per-run prompts.</li>
+    <li><b>US-2:</b> when codex is not installed / not signed in (or no folder / no home configured), the command reports a
+        distinct actionable message and never opens a terminal.</li>
+  </ul>
+  <h3>Artifacts</h3>
+  <ul>
+    <li><code>src/adapters/codex/preflight.ts</code> — <code>checkCodex</code> detection unit.</li>
+    <li><code>src/commands/start-agent.ts</code> — <code>startAgentCommand(deps)</code> handler.</li>
+    <li><code>src/extension.ts</code> — registers <code>skynet.startAgent</code>, wires real deps (<code>extension.test.ts</code> updated).</li>
+    <li><code>package.json</code> — command, <code>skynet.codex.*</code> settings, activation event.</li>
+  </ul>
+  <h3>How to see it working</h3>
+  <p>Extension Development Host, codex installed + signed in, <code>skynet.codex.home</code> set to an isolated home, a
+     folder open → <b>Skynet: Start Agent</b> opens a <code>Skynet · codex …</code> terminal that reaches readiness, then
+     <b>Skynet: Send Task</b> drives a turn. Point <code>skynet.codex.home</code> at an empty dir → Start Agent shows
+     "codex is not signed in. Run: codex login" and no terminal opens.</p>
+
+  <h2>Global Constraints</h2>
+  <ul>
+    <li>TypeScript only; Biome only; kebab-case filenames; camelCase functions, PascalCase types.</li>
+    <li>Unit tests: vitest, colocated <code>*.test.ts</code>, headless — no real codex, no real terminal, no real
+        <code>child_process</code> spawn (inject the runner).</li>
+    <li>pty/terminal only for orchestration; no provider SDK/API dep. The preflight is the only new
+        <code>child_process</code> use, confined to install/auth diagnostics.</li>
+    <li>Codex home resolved as <code>skynet.codex.home</code> → <code>CODEX_HOME</code> env → error.</li>
+    <li>Preflight parses <code>codex login status</code> <b>stdout</b> (<code>Not logged in</code>), not exit code
+        (exit <code>0</code> both ways).</li>
+    <li>Sandbox default <code>workspace-write</code>; <code>model</code> omitted → codex default.</li>
+  </ul>
+
+  <h2>Foundation</h2>
+  <div class="card">
+    <h3>Task 1 — Codex preflight unit</h3>
+    <p class="dep">Depends on: none</p>
+    <p class="files"><b>Create:</b> <code>src/adapters/codex/preflight.ts</code> · <b>Test:</b> <code>preflight.test.ts</code></p>
+    <p class="files"><b>Produces:</b> <code>RunResult</code>, <code>Run</code>, <code>PreflightResult</code>,
+       <code>checkCodex(run, codexHome)</code></p>
+    <ul class="steps">
+      <li>Write 4 failing tests: not-installed (spawn throws), not-signed-in (stdout <code>Not logged in</code>), env carries <code>CODEX_HOME</code>, ok(version).</li>
+      <li>Run → FAIL (import unresolved).</li>
+      <li>Implement <code>checkCodex</code>: <code>--version</code> spawn-fail → not-installed; <code>login status</code> stdout has <code>Not logged in</code> → not-signed-in; else ok(trimmed version).</li>
+      <li>Run → PASS (4). Commit <code>feat: codex install/sign-in preflight</code>.</li>
+    </ul>
+  </div>
+
+  <h2>US-1 — Start an agent in one command</h2>
+  <div class="card">
+    <h3>Task 2 — Start-agent command handler</h3>
+    <p class="dep">Depends on: Task 1</p>
+    <p class="files"><b>Create:</b> <code>src/commands/start-agent.ts</code> · <b>Test:</b> <code>start-agent.test.ts</code></p>
+    <p class="files"><b>Produces:</b> <code>Sandbox</code>, <code>StartAgentConfig</code>, <code>StartAgentWindow</code>,
+       <code>StartAgentDeps</code>, <code>startAgentCommand(deps)</code>. <span class="mut">Gate call added in Task 4.</span></p>
+    <ul class="steps">
+      <li>Write 7 failing tests: launch opts from config, defaults (model omit / sandbox workspace-write), refuse when active, allow when terminal, no-workspace abort, no-home abort, thrown <code>runInteractive</code> caught.</li>
+      <li>Run → FAIL. Implement handler: active/cwd/home guards → build <code>InteractiveOpts</code> → <code>runInteractive</code> → <code>setActiveSession</code>; catch launch errors.</li>
+      <li>Run → PASS (7). Commit <code>feat: start-agent command handler launch path</code>.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Task 3 — Register the command and wire real dependencies</h3>
+    <p class="dep">Depends on: Task 2</p>
+    <p class="files"><b>Modify:</b> <code>src/extension.ts</code>, <code>src/extension.test.ts</code>, <code>package.json</code></p>
+    <p class="files"><b>Produces:</b> registered <code>skynet.startAgent</code>; <code>contributes.commands</code> +
+       <code>configuration</code> + <code>activationEvents</code>.</p>
+    <ul class="steps">
+      <li>Update <code>extension.test.ts</code>: assert <code>skynet.startAgent</code> registered + exactly <b>3</b> commands.</li>
+      <li>Run → FAIL (2 commands). Wire <code>activate</code>: real <code>execFile</code> <code>Run</code> (ENOENT → reject), <code>readConfig</code> (setting→env), <code>genWorkerId</code>, register the command with real deps.</li>
+      <li>Add <code>skynet.startAgent</code> command, <code>skynet.codex.home/model/sandbox</code> settings, <code>onCommand:skynet.startAgent</code> activation to <code>package.json</code>.</li>
+      <li>Run <code>test:unit</code> + <code>lint</code> → PASS. Commit <code>feat: register skynet.startAgent command and settings</code>.</li>
+    </ul>
+  </div>
+  <div class="chk"><b>US-1 Checkpoint.</b> <code>pnpm run test:unit</code> green; in the Dev Host: Start Agent (installed+signed-in+folder+home)
+     opens a terminal + Send Task drives a turn; a second Start Agent → "already running"; no folder → "Open a folder…";
+     no home → "Set skynet.codex.home…"; no terminal in the abort cases.</div>
+
+  <h2>US-2 — Detect a missing or signed-out CLI</h2>
+  <div class="card">
+    <h3>Task 4 — Gate the launch on the preflight</h3>
+    <p class="dep">Depends on: Task 1, Task 2</p>
+    <p class="files"><b>Modify:</b> <code>src/commands/start-agent.ts</code>, <code>start-agent.test.ts</code></p>
+    <p class="files"><b>Produces:</b> no new exports — <code>startAgentCommand</code> now calls <code>checkCodex</code>
+       after resolving the home, before building <code>opts</code>.</p>
+    <ul class="steps">
+      <li>Write 4 failing tests: <code>checkCodex</code> called with resolved home; not-installed aborts (no launch, no publish); not-signed-in aborts; home missing → <code>checkCodex</code> not called.</li>
+      <li>Run → FAIL (gate absent). Insert <code>const pre = await deps.checkCodex(codexHome); if (!pre.ok) { show(pre.message); return; }</code> between the home guard and <code>opts</code>.</li>
+      <li>Run → PASS (11 total). Commit <code>feat: gate start-agent on the codex preflight</code>.</li>
+    </ul>
+  </div>
+  <div class="chk"><b>US-2 Checkpoint.</b> Signed-out home → "codex is not signed in. Run: codex login", no terminal;
+     codex off <code>PATH</code> → "codex CLI not found on your PATH…", no terminal; signed-in → preflight ok and launch
+     proceeds (unit <code>reports ok with the parsed version</code> + US-1 happy path).</div>
+
+  <footer>Skynet · E1 F1.1 Start Agent + Codex Preflight plan · source of truth is the Markdown plan alongside this file · 2026-07-07.</footer>
+</div>
+</body>
+</html>
