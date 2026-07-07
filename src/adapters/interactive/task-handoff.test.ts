@@ -168,4 +168,18 @@ describe("stopAgentCommand", () => {
 			"No running agent to stop.",
 		);
 	});
+
+	test("catches a thrown dispose and shows an error, no rejection", async () => {
+		const { session } = fakeSession("busy");
+		session.dispose = vi.fn(async () => {
+			throw new Error("rm failed");
+		});
+		const win = fakeWindow();
+
+		await expect(stopAgentCommand(() => session, win)).resolves.toBeUndefined();
+
+		expect(win.showErrorMessage).toHaveBeenCalledWith(
+			"Failed to stop agent: rm failed",
+		);
+	});
 });

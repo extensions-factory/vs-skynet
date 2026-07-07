@@ -75,6 +75,11 @@ export async function stopAgentCommand(
 		await win.showInformationMessage("No running agent to stop.");
 		return;
 	}
-	await session.dispose();
-	await win.showInformationMessage("Agent stopped.");
+	try {
+		await session.dispose();
+		await win.showInformationMessage("Agent stopped.");
+	} catch (err) {
+		const detail = err instanceof Error ? err.message : String(err);
+		await win.showErrorMessage(`Failed to stop agent: ${detail}`);
+	}
 }
