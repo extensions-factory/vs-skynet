@@ -76,7 +76,7 @@
     <li><code>src/adapters/codex/preflight.ts</code> — <code>checkCodex</code> detection unit.</li>
     <li><code>src/commands/start-agent.ts</code> — <code>startAgentCommand(deps)</code> handler.</li>
     <li><code>src/extension.ts</code> — registers <code>skynet.startAgent</code>, wires real deps (<code>extension.test.ts</code> updated).</li>
-    <li><code>package.json</code> — command, <code>skynet.codex.*</code> settings, activation event.</li>
+    <li><code>package.json</code> — command and <code>skynet.codex.*</code> settings (activation auto-generated from the command).</li>
   </ul>
   <h3>How to see it working</h3>
   <p>Extension Development Host, codex installed + signed in, <code>skynet.codex.home</code> set to an isolated home, a
@@ -130,11 +130,11 @@
     <p class="dep">Depends on: Task 2</p>
     <p class="files"><b>Modify:</b> <code>src/extension.ts</code>, <code>src/extension.test.ts</code>, <code>package.json</code></p>
     <p class="files"><b>Produces:</b> registered <code>skynet.startAgent</code>; <code>contributes.commands</code> +
-       <code>configuration</code> + <code>activationEvents</code>.</p>
+       <code>configuration</code> (<code>activationEvents</code> stays empty — auto-generated).</p>
     <ul class="steps">
-      <li>Update <code>extension.test.ts</code>: assert <code>skynet.startAgent</code> registered + exactly <b>3</b> commands.</li>
+      <li>Update <code>extension.test.ts</code>: keep the send/stop/mock-surface tests; replace only the "exactly two" test with a <code>skynet.startAgent</code> registration assertion + exactly <b>3</b> commands.</li>
       <li>Run → FAIL (2 commands). Wire <code>activate</code>: real <code>execFile</code> <code>Run</code> (ENOENT → reject), <code>readConfig</code> (setting→env), <code>genWorkerId</code>, register the command with real deps.</li>
-      <li>Add <code>skynet.startAgent</code> command, <code>skynet.codex.home/model/sandbox</code> settings, <code>onCommand:skynet.startAgent</code> activation to <code>package.json</code>.</li>
+      <li>Add <code>skynet.startAgent</code> command + <code>skynet.codex.home/model/sandbox</code> settings to <code>package.json</code>; leave <code>activationEvents</code> empty (VSCode auto-activates from the command declaration).</li>
       <li>Run <code>test:unit</code> + <code>lint</code> → PASS. Commit <code>feat: register skynet.startAgent command and settings</code>.</li>
     </ul>
   </div>

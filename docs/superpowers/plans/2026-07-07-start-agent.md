@@ -24,7 +24,7 @@ After completing this plan, the developer will have:
 - `src/adapters/codex/preflight.ts` — `checkCodex(run, codexHome)` detection unit (+ `preflight.test.ts`).
 - `src/commands/start-agent.ts` — `startAgentCommand(deps)` command handler (+ `start-agent.test.ts`).
 - `src/extension.ts` — registers `skynet.startAgent`, wires real deps (edited; `extension.test.ts` updated).
-- `package.json` — `skynet.startAgent` command, `skynet.codex.*` settings, activation event.
+- `package.json` — `skynet.startAgent` command and `skynet.codex.*` settings (activation is auto-generated from the command declaration).
 
 ### How to see it working
 
@@ -207,6 +207,8 @@ Implements spec US-1. Task 2 is the pure handler (launch path + guards); Task 3 
 
   Note: `checkCodex` is declared here but not *called* until Task 4 — Task 2 wires the launch path only. Task 4 inserts the gate.
 
+  **Intentional spec deviations (SF-1, SF-2):** the property is named `win` (not the spec's `window`) to avoid shadowing the `vscode.window` import in the composition root, and the config field is `codexHome` (not the spec's `home`) because the config type isn't codex-scoped by name. Both are internally consistent across handler, tests, and wiring.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
@@ -261,6 +263,7 @@ describe("startAgentCommand (launch path)", () => {
 			sandbox: "read-only",
 		});
 		expect(deps.setActiveSession).toHaveBeenCalledWith(session);
+		expect(deps.win.showInformationMessage).toHaveBeenCalledWith("Agent started.");
 	});
 
 	test("omits model and defaults sandbox to workspace-write", async () => {
@@ -431,11 +434,11 @@ git commit -m "feat: start-agent command handler launch path"
 
 **Interfaces:**
 - Consumes: `startAgentCommand`, `StartAgentDeps`, `StartAgentConfig`, `Sandbox` from `src/commands/start-agent.ts`; `checkCodex`, `Run`, `RunResult` from `src/adapters/codex/preflight.ts`; `codexAdapter` from `src/adapters/codex/codex-adapter.ts`; existing `setActiveSession` / `activeSession` in `extension.ts`.
-- Produces: registered `skynet.startAgent` command; `contributes.commands` + `contributes.configuration` + `activationEvents` in `package.json`.
+- Produces: registered `skynet.startAgent` command; `contributes.commands` + `contributes.configuration` in `package.json` (`activationEvents` stays empty — auto-generated).
 
 - [ ] **Step 1: Update the failing extension test**
 
-Change the "exactly two commands" test to three and add a start-agent registration assertion:
+Keep the existing `registers the send-task command`, `registers the stop-agent command`, and `mocks the terminal API surface` tests unchanged. Only **replace** the `registers exactly the two Skynet commands (no scaffold left)` test with the two tests below (a start-agent registration assertion + an exactly-three assertion):
 
 ```ts
 // src/extension.test.ts — replace the "exactly the two Skynet commands" test
@@ -497,10 +500,14 @@ const runCli: Run = (cmd, args, env) =>
 			args,
 			{ env: { ...process.env, ...env } },
 			(err, stdout, stderr) => {
+				// Spawn failure (binary not on PATH) → reject so checkCodex reports not-installed.
 				if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
 					reject(err);
 					return;
 				}
+				// ponytail: async execFile puts the numeric exit code on err.code (not err.status,
+				// which is spawnSync's field). checkCodex never reads `code` — it parses stdout —
+				// so this is best-effort only; the exit code is deliberately not a decision input.
 				const code =
 					err && typeof (err as { code?: unknown }).code === "number"
 						? (err as { code: number }).code
@@ -550,7 +557,7 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {}
 ```
 
-- [ ] **Step 4: Add the command, settings, and activation event to `package.json`**
+- [ ] **Step 4: Add the command and settings to `package.json`**
 
 In `contributes.commands`, add:
 
@@ -588,11 +595,7 @@ Add `contributes.configuration` (sibling of `commands`):
 }
 ```
 
-Add to `activationEvents`:
-
-```json
-"activationEvents": ["onCommand:skynet.startAgent"]
-```
+Leave `activationEvents` as `[]`. VSCode (engine `^1.125`) auto-generates `onCommand:*` activation for every command in `contributes.commands`, which is how the existing `sendTask` / `stopAgent` already activate — no explicit entry is needed.
 
 - [ ] **Step 5: Run the tests and lint to verify they pass**
 
